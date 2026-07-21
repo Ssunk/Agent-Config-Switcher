@@ -6,7 +6,7 @@ type ApplyResult={applied_path:string};
 declare global { interface Window { __TAURI__?:{core:{invoke<T>(name:string,args?:Record<string,unknown>):Promise<T>}} } }
 const invoke=async<T>(n:string,a?:Record<string,unknown>)=>window.__TAURI__?.core.invoke<T>(n,a)??Promise.reject(new Error('请在 Tauri 应用中运行'));
 const app=document.querySelector<HTMLElement>('#app')!;
-let config:Config|undefined; let profiles:Profile[]=[]; let selected:Profile|undefined; let fields:Field[]=[]; let view:'home'|'editor'='home'; let message=''; let error=''; let isNew=false;
+let config:Config|undefined; let profiles:Profile[]=[]; let selected:Profile|undefined; let fields:Field[]=[]; let view:'home'|'editor'='home'; let message=''; let error=''; let isNew=false; let activeTab:'fields'|'auth'='fields'; let authContent=''; let authFields:Field[]=[];
 const esc=(s:string)=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
 
 const svg=(p:string)=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
@@ -80,25 +80,31 @@ function home(){
   document.querySelectorAll<HTMLElement>('[data-del]').forEach(x=>x.onclick=()=>remove(x.dataset.del!));
 }
 
-function fieldControl(f:Field,i:number){
-  if(f.kind==='boolean')return `<select data-field="${i}"><option value="true" ${f.value==='true'?'selected':''}>true</option><option value="false" ${f.value==='false'?'selected':''}>false</option></select>`;
-  if(f.kind==='array')return `<textarea class="array-input" data-field="${i}">${esc(f.value)}</textarea>`;
-  if(f.key==='model'){const models=['gpt-5.6-sol','claude-fable-5','gpt-5.5','grok-4.5'];if(f.value&&!models.includes(f.value))models.unshift(f.value);return `<select data-field="${i}">${models.map(m=>`<option value="${esc(m)}" ${m===f.value?'selected':''}>${esc(m)}</option>`).join('')}</select>`}
-  return `<input type="${f.kind==='integer'||f.kind==='float'?'number':'text'}" data-field="${i}" value="${esc(f.value)}">`;
+function fieldControl(f:Field,i:number,attr:'field'|'auth'='field'){
+  const d=attr==='auth'?`data-auth="${i}"`:`data-field="${i}"`;
+  if(f.kind==='boolean')return `<select ${d}><option value="true" ${f.value==='true'?'selected':''}>true</option><option value="false" ${f.value==='false'?'selected':''}>false</option></select>`;
+  if(f.kind==='array')return `<textarea class="array-input" ${d}>${esc(f.value)}</textarea>`;
+  if(f.key==='model'){const models=['gpt-5.6-sol','claude-fable-5','gpt-5.5','grok-4.5'];if(f.value&&!models.includes(f.value))models.unshift(f.value);return `<select ${d}>${models.map(m=>`<option value="${esc(m)}" ${m===f.value?'selected':''}>${esc(m)}</option>`).join('')}</select>`}
+  return `<input type="${f.kind==='integer'||f.kind==='float'?'number':'text'}" ${d} value="${esc(f.value)}">`;
 }
 
+function renderFieldsTab():string{
+  let last='';return fields.map((f,i)=>{const h=f.section!==last?`<h3>${esc(f.section)}</h3>`:'';last=f.section;return `${h}<label class="field-row"><span class="field-label"><b>${esc(f.key)}</b><small title="${esc(f.path.join('.'))}">${esc(f.path.join('.'))}</small></span>${fieldControl(f,i,'field')}</label>`;}).join('');
+}
+function renderAuthTab():string{
+  let last='';return authFields.map((f,i)=>{const h=f.section!==last?`<h3>${esc(f.section)}</h3>`:'';last=f.section;return `${h}<label class="field-row"><span class="field-label"><b>${esc(f.key)}</b><small title="${esc(f.path.join('.'))}">${esc(f.path.join('.'))}</small></span>${fieldControl(f,i,'auth')}</label>`;}).join('');
+}
+function readAuthFields(){document.querySelectorAll<HTMLInputElement|HTMLSelectElement|HTMLTextAreaElement>('[data-auth]').forEach(el=>authFields[Number(el.dataset.auth)].value=el.value);}
+
 function editor(){
-  let last='';
-  const form=fields.map((f,i)=>{
-    const h=f.section!==last?`<h3>${esc(f.section)}</h3>`:'';
-    last=f.section;
-    return `${h}<label class="field-row"><span class="field-label"><b>${esc(f.key)}</b><small title="${esc(f.path.join('.'))}">${esc(f.path.join('.'))}</small></span>${fieldControl(f,i)}</label>`;
-  }).join('');
+  const tabContent=activeTab==='fields'
+    ?`<div><label class="name-field"><span>配置名称</span><input id="name" type="text" value="${esc(selected?.name??'')}"></label><div class="fields">${renderFieldsTab()}</div></div>`
+    :`<div class="fields">${renderAuthTab()}</div>`;
   shell(`<section class="editor-card">
-    <h1>${isNew?'新建配置':'编辑配置'}</h1>
-    <label class="name-field"><span>配置名称</span><input id="name" type="text" value="${esc(selected?.name??'')}"></label>
-    <div class="fields">${form}</div>
+    <div class="tabs"><button class="tab ${activeTab==='fields'?'active':''}" data-tab="fields">${icon.edit} 配置字段</button><button class="tab ${activeTab==='auth'?'active':''}" data-tab="auth">${icon.file} auth.json</button></div>
+    ${tabContent}
   </section>`);
+  document.querySelectorAll<HTMLElement>('.tab').forEach(x=>x.onclick=()=>{if(activeTab==='auth')readAuthFields();activeTab=x.dataset.tab as 'fields'|'auth';editor()});
 }
 
 function filterFields(all:Field[]):Field[]{
@@ -107,22 +113,36 @@ function filterFields(all:Field[]):Field[]{
 function render(){view==='home'?home():editor()}
 async function load(){try{config=await invoke<Config>('load_codex_config');profiles=await invoke<Profile[]>('list_profiles');message='';error='';render()}catch(e){error=String(e);render()}}
 async function resetAll(){try{await invoke('reset_all_enabled');await load();message='所有配置已取消启用';}catch(e){error=String(e);render()}}
+async function loadAuth(){try{authContent=await invoke<string>('load_auth_json');authFields=await invoke<Field[]>('parse_auth_content',{content:authContent})}catch(e){authContent='{}';authFields=[]}}
 async function create(kind:'current'|'empty'){try{if(!config){error='尚未加载配置';render();return}
   const content=kind==='current'?config.content:'# Codex config profile\nmodel = \"\"\nmodel_provider = \"\"\n';
   fields=filterFields(await invoke<Field[]>('parse_toml_content',{content}));
   selected={id:'',name:'新配置',file_name:'',created_at:'',updated_at:''};
-  isNew=true;view='editor';message='';error='';render()}catch(e){error=String(e);render()}}
-async function select(id:string){selected=profiles.find(p=>p.id===id);if(!selected)return;try{fields=filterFields(await invoke<Field[]>('parse_profile_fields',{profileId:id}));view='editor';message='';error='';render()}catch(e){error=String(e);render()}}
+  isNew=true;view='editor';activeTab='fields';await loadAuth();message='';error='';render()}catch(e){error=String(e);render()}}
+async function select(id:string){selected=profiles.find(p=>p.id===id);if(!selected)return;try{fields=filterFields(await invoke<Field[]>('parse_profile_fields',{profileId:id}));view='editor';activeTab='fields';await loadAuth();message='';error='';render()}catch(e){error=String(e);render()}}
 function readFields(){document.querySelectorAll<HTMLInputElement|HTMLSelectElement|HTMLTextAreaElement>('[data-field]').forEach(el=>fields[Number(el.dataset.field)].value=el.value);return fields}
-async function save(){if(!selected)return;try{const name=document.querySelector<HTMLInputElement>('#name')!.value||'新配置';
-  if(isNew){
-    selected=await invoke<Profile>('create_profile_from_current',{name});
-    isNew=false;
-  }
+async function save(){if(!selected)return;try{if(activeTab==='fields'){
+  const name=document.querySelector<HTMLInputElement>('#name')?.value||'新配置';
+  if(isNew){selected=await invoke<Profile>('create_profile_from_current',{name});isNew=false;}
   await invoke('save_profile_fields',{profileId:selected.id,name,fields:readFields()});
   profiles=await invoke<Profile[]>('list_profiles');
   selected=profiles.find(p=>p.id===selected!.id);
-  message='配置已保存';error='';view='home';render()}catch(e){error=String(e);render()}}
-async function apply(id:string){try{if(view==='editor'){if(isNew){const name=document.querySelector<HTMLInputElement>('#name')?.value||'新配置';selected=await invoke<Profile>('create_profile_from_current',{name});isNew=false;id=selected.id;await invoke('save_profile_fields',{profileId:id,name,fields:readFields()});}else{selected=profiles.find(p=>p.id===id);if(!selected)return;await invoke('save_profile_fields',{profileId:id,name:document.querySelector<HTMLInputElement>('#name')?.value??selected.name,fields:readFields()});}}else{selected=profiles.find(p=>p.id===id);if(!selected)return;}await invoke<ApplyResult>('apply_profile',{profileId:id});message=`已启用 ${selected.name}`;view='home';await load()}catch(e){error=String(e);render()}}
+}else{
+  readAuthFields();
+  const newContent=await invoke<string>('save_auth_fields',{content:authContent,fields:authFields});
+  await invoke('save_auth_json',{content:newContent});
+  authContent=newContent;
+}message='配置已保存';error='';view='home';render()}catch(e){error=String(e);render()}}
+async function apply(id:string){try{if(view==='editor'){
+  if(activeTab==='fields'){
+    const name=document.querySelector<HTMLInputElement>('#name')?.value||'新配置';
+    if(isNew){selected=await invoke<Profile>('create_profile_from_current',{name});isNew=false;id=selected.id;await invoke('save_profile_fields',{profileId:id,name,fields:readFields()});}else{selected=profiles.find(p=>p.id===id);if(!selected)return;await invoke('save_profile_fields',{profileId:id,name:document.querySelector<HTMLInputElement>('#name')?.value??selected.name,fields:readFields()});}
+  }else{
+    readAuthFields();
+    const newContent=await invoke<string>('save_auth_fields',{content:authContent,fields:authFields});
+    await invoke('save_auth_json',{content:newContent});
+    authContent=newContent;
+    selected=profiles.find(p=>p.id===id);if(!selected)return;
+  }}else{selected=profiles.find(p=>p.id===id);if(!selected)return;}await invoke<ApplyResult>('apply_profile',{profileId:id});message=`已启用 ${selected.name}`;view='home';await load()}catch(e){error=String(e);render()}}
 async function remove(id:string){const p=profiles.find(x=>x.id===id);if(p?.last_applied){error='无法删除：该配置当前已启用，请先启用其他配置或点击「全部取消启用」后再删除';render();return}if(!confirm(`删除配置「${p?.name??''}」？`))return;try{await invoke('delete_profile',{profileId:id});await load()}catch(e){error=String(e);render()}}
 load();

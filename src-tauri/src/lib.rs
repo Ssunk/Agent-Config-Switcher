@@ -215,6 +215,87 @@ pub mod commands {
         Ok(ApplyResult { applied_path: target.display().to_string() })
     }
 
+    fn auth_json_path() -> PathBuf { config_path().parent().unwrap_or(Path::new(".")).join("auth.json") }
+
+    #[tauri::command]
+    pub fn load_auth_json() -> Result<String, String> {
+        let path = auth_json_path();
+        if !path.exists() { return Ok("{}".to_string()); }
+        fs::read_to_string(&path).map_err(|e| format!("无法读取 auth.json: {e}"))
+    }
+
+    #[tauri::command]
+    pub fn save_auth_json(content: String) -> Result<(), String> {
+        serde_json::from_str::<serde_json::Value>(&content)
+            .map_err(|e| format!("JSON 格式错误: {e}"))?;
+        write_atomic(&auth_json_path(), &content)
+    }
+
+    fn collect_json_fields(value: &serde_json::Value, path: &mut Vec<String>, out: &mut Vec<TomlField>) {
+        if let serde_json::Value::Object(map) = value {
+            for (key, val) in map {
+                path.push(key.clone());
+                if val.is_object() {
+                    collect_json_fields(val, path, out);
+                } else {
+                    let kind = match val {
+                        serde_json::Value::String(_) => "string",
+                        serde_json::Value::Number(_) => "number",
+                        serde_json::Value::Bool(_) => "boolean",
+                        _ => "other",
+                    }.to_string();
+                    let value_str = match val {
+                        serde_json::Value::String(s) => s.clone(),
+                        serde_json::Value::Number(n) => n.to_string(),
+                        serde_json::Value::Bool(b) => b.to_string(),
+                        _ => val.to_string(),
+                    };
+                    let key = path.last().cloned().unwrap_or_default();
+                    let section = if path.len() > 1 { path[..path.len()-1].join(".") } else { "常规".into() };
+                    out.push(TomlField { path: path.clone(), section, key, kind: kind.into(), value: value_str });
+                }
+                path.pop();
+            }
+        }
+    }
+
+    fn set_json_value(value: &mut serde_json::Value, path: &[String], kind: &str, val: &str) -> Result<(), String> {
+        if path.is_empty() { return Err("路径为空".into()); }
+        let mut current = value;
+        for segment in path.iter().take(path.len() - 1) {
+            if !current.is_object() { *current = serde_json::Value::Object(serde_json::Map::new()); }
+            if current.get(segment).is_none() {
+                current.as_object_mut().unwrap().insert(segment.clone(), serde_json::Value::Object(serde_json::Map::new()));
+            }
+            current = current.get_mut(segment).ok_or_else(|| format!("路径不存在: {}", path.join(".")))?;
+        }
+        let key = path.last().unwrap();
+        let new_val: serde_json::Value = match kind {
+            "string" => serde_json::Value::String(val.to_string()),
+            "number" => val.parse::<f64>().map(|n| serde_json::json!(n)).unwrap_or_else(|_| serde_json::Value::String(val.to_string())),
+            "boolean" => serde_json::Value::Bool(val == "true"),
+            _ => serde_json::Value::String(val.to_string()),
+        };
+        if let Some(obj) = current.as_object_mut() { obj.insert(key.clone(), new_val); }
+        Ok(())
+    }
+
+    #[tauri::command]
+    pub fn parse_auth_content(content: String) -> Result<Vec<TomlField>, String> {
+        let value: serde_json::Value = serde_json::from_str(&content).map_err(|e| format!("JSON 格式错误: {e}"))?;
+        let mut out = Vec::new();
+        let mut path = Vec::new();
+        collect_json_fields(&value, &mut path, &mut out);
+        Ok(out)
+    }
+
+    #[tauri::command]
+    pub fn save_auth_fields(content: String, fields: Vec<TomlField>) -> Result<String, String> {
+        let mut value: serde_json::Value = serde_json::from_str(&content).map_err(|e| format!("JSON 格式错误: {e}"))?;
+        for field in &fields { set_json_value(&mut value, &field.path, &field.kind, &field.value)?; }
+        serde_json::to_string_pretty(&value).map_err(|e| format!("序列化 JSON 失败: {e}"))
+    }
+
     #[tauri::command]
     pub fn open_config_directory() -> Result<(), String> { let p = config_path(); std::process::Command::new("explorer").arg(p.parent().unwrap_or(Path::new("."))).spawn().map(|_| ()).map_err(err) }
 
