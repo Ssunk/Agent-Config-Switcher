@@ -101,15 +101,18 @@ function editor(){
   </section>`);
 }
 
+function filterFields(all:Field[]):Field[]{
+  return all.filter(f=>f.path.length===1||(f.path.length>=2&&f.path[0]==='model_providers'&&f.path[1]==='custom'));
+}
 function render(){view==='home'?home():editor()}
 async function load(){try{config=await invoke<Config>('load_codex_config');profiles=await invoke<Profile[]>('list_profiles');message='';error='';render()}catch(e){error=String(e);render()}}
 async function resetAll(){try{await invoke('reset_all_enabled');await load();message='所有配置已取消启用';}catch(e){error=String(e);render()}}
 async function create(kind:'current'|'empty'){try{if(!config){error='尚未加载配置';render();return}
   const content=kind==='current'?config.content:'# Codex config profile\nmodel = \"\"\nmodel_provider = \"\"\n';
-  fields=await invoke<Field[]>('parse_toml_content',{content});
+  fields=filterFields(await invoke<Field[]>('parse_toml_content',{content}));
   selected={id:'',name:'新配置',file_name:'',created_at:'',updated_at:''};
   isNew=true;view='editor';message='';error='';render()}catch(e){error=String(e);render()}}
-async function select(id:string){selected=profiles.find(p=>p.id===id);if(!selected)return;try{fields=await invoke<Field[]>('parse_profile_fields',{profileId:id});view='editor';message='';error='';render()}catch(e){error=String(e);render()}}
+async function select(id:string){selected=profiles.find(p=>p.id===id);if(!selected)return;try{fields=filterFields(await invoke<Field[]>('parse_profile_fields',{profileId:id}));view='editor';message='';error='';render()}catch(e){error=String(e);render()}}
 function readFields(){document.querySelectorAll<HTMLInputElement|HTMLSelectElement|HTMLTextAreaElement>('[data-field]').forEach(el=>fields[Number(el.dataset.field)].value=el.value);return fields}
 async function save(){if(!selected)return;try{const name=document.querySelector<HTMLInputElement>('#name')!.value||'新配置';
   if(isNew){
