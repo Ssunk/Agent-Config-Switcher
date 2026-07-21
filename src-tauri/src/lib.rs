@@ -4,7 +4,6 @@ pub mod commands {
     use std::{fs, io, path::{Path, PathBuf}};
     use toml_edit::DocumentMut;
     use uuid::Uuid;
-
     #[derive(Clone, Serialize, Deserialize)]
     pub struct TomlProfile {
         pub id: String,
@@ -157,6 +156,15 @@ pub mod commands {
         collect_fields(doc.as_item(), &mut path, &mut out); Ok(out)
     }
 
+    #[tauri::command]
+    pub fn parse_toml_content(content: String) -> Result<Vec<TomlField>, String> {
+        let doc = validate_toml(&content)?;
+        let mut out = Vec::new();
+        let mut path = Vec::new();
+        collect_fields(doc.as_item(), &mut path, &mut out);
+        Ok(out)
+    }
+
     fn set_field(doc: &mut DocumentMut, field: &TomlField) -> Result<(), String> {
         if field.path.is_empty(){return Err("配置项路径为空".into())}
         let new_item = if field.kind == "string" { toml_edit::value(field.value.clone()) } else {
@@ -187,6 +195,8 @@ pub mod commands {
     #[tauri::command]
     pub fn delete_profile(profile_id: String) -> Result<(), String> {
         let mut items = read_index()?; let pos = items.iter().position(|p| p.id == profile_id).ok_or("档案不存在")?;
+        let p = &items[pos];
+        if p.last_applied.is_some() { return Err("无法删除：该配置当前已启用，请先启用其他配置或使用「全部取消启用」后再删除".into()); }
         let p = items.remove(pos); let path = safe_profile_path(&p.file_name)?; if path.exists() { fs::remove_file(path).map_err(err)?; } write_index(&items)
     }
 
@@ -204,9 +214,6 @@ pub mod commands {
         p.last_applied = Some(Utc::now().to_rfc3339()); p.updated_at = Utc::now().to_rfc3339(); write_index(&items)?;
         Ok(ApplyResult { applied_path: target.display().to_string() })
     }
-
-    #[tauri::command]
-    pub fn is_codex_running() -> bool { std::process::Command::new("tasklist").output().map(|o| String::from_utf8_lossy(&o.stdout).to_ascii_lowercase().contains("codex.exe")).unwrap_or(false) }
 
     #[tauri::command]
     pub fn open_config_directory() -> Result<(), String> { let p = config_path(); std::process::Command::new("explorer").arg(p.parent().unwrap_or(Path::new("."))).spawn().map(|_| ()).map_err(err) }

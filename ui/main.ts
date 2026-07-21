@@ -1,11 +1,12 @@
 export {};
-type Profile={id:string;name:string;file_name:string;last_applied?:string};
-type Config={path:string;model?:string;provider?:string};
+type Profile={id:string;name:string;file_name:string;created_at:string;updated_at:string;last_applied?:string};
+type Config={path:string;content:string;model?:string;provider?:string};
 type Field={path:string[];section:string;key:string;kind:string;value:string};
+type ApplyResult={applied_path:string};
 declare global { interface Window { __TAURI__?:{core:{invoke<T>(name:string,args?:Record<string,unknown>):Promise<T>}} } }
 const invoke=async<T>(n:string,a?:Record<string,unknown>)=>window.__TAURI__?.core.invoke<T>(n,a)??Promise.reject(new Error('请在 Tauri 应用中运行'));
 const app=document.querySelector<HTMLElement>('#app')!;
-let config:Config|undefined; let profiles:Profile[]=[]; let selected:Profile|undefined; let fields:Field[]=[]; let view:'home'|'editor'='home'; let message=''; let error='';
+let config:Config|undefined; let profiles:Profile[]=[]; let selected:Profile|undefined; let fields:Field[]=[]; let view:'home'|'editor'='home'; let message=''; let error=''; let isNew=false;
 const esc=(s:string)=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
 
 const svg=(p:string)=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
@@ -27,15 +28,25 @@ const icon={
 };
 
 function shell(content:string){
+  const isEditor=view==='editor';
+  const topActions=isEditor
+    ?`<button id="save" class="btn">${icon.check}保存</button><button id="apply" class="btn primary">${icon.zap}保存并启用</button>`
+    :`<button id="reload" class="btn ghost icon" title="重新加载">${icon.reload}</button><button id="resetAll" class="btn ghost" title="全部取消启用">全部取消启用</button><button id="newCurrent" class="btn primary">${icon.plus}新建配置</button>`;
   app.innerHTML=`<header class="topbar">
-    <div class="brand"><div class="brand-logo">${icon.logo}</div><div><div class="brand-name">Codex Provider Switcher</div><div class="brand-sub">TOML 配置管理</div></div></div>
-    <div class="top-actions"><button id="reload" class="btn ghost icon" title="重新加载">${icon.reload}</button><button id="resetAll" class="btn ghost" title="全部取消启用">全部取消启用</button><button id="newCurrent" class="btn primary">${icon.plus}新建配置</button></div>
+    <div class="brand">${isEditor?`<button id="back" class="btn ghost icon" title="返回">${icon.back}</button>`:''}<div class="brand-logo">${icon.logo}</div><div><div class="brand-name">Codex Provider Switcher</div><div class="brand-sub">TOML 配置管理</div></div></div>
+    <div class="top-actions">${topActions}</div>
   </header>
   <main class="page">${content}</main>
   <div class="toast-stack">${message?`<div class="toast success">${icon.okCircle}<span>${esc(message)}</span></div>`:''}${error?`<div class="toast error">${icon.errCircle}<span>${esc(error)}</span></div>`:''}</div>`;
-  document.querySelector('#reload')?.addEventListener('click',load);
-  document.querySelector('#resetAll')?.addEventListener('click',resetAll);
-  document.querySelector('#newCurrent')?.addEventListener('click',()=>create('current'));
+  if(isEditor){
+    document.querySelector('#back')?.addEventListener('click',()=>{isNew=false;view='home';render()});
+    document.querySelector('#save')?.addEventListener('click',save);
+    document.querySelector('#apply')?.addEventListener('click',()=>apply(selected!.id));
+  }else{
+    document.querySelector('#reload')?.addEventListener('click',load);
+    document.querySelector('#resetAll')?.addEventListener('click',resetAll);
+    document.querySelector('#newCurrent')?.addEventListener('click',()=>create('current'));
+  }
 }
 
 function home(){
@@ -49,7 +60,7 @@ function home(){
     <div class="card-actions">
       <button class="btn ${p.last_applied?'':'primary'}" data-enable="${p.id}" ${p.last_applied?'disabled':''}>${p.last_applied?icon.check+'已启用':icon.zap+'启用'}</button>
       <button class="btn ghost" data-edit="${p.id}">${icon.edit}编辑</button>
-      <button class="btn ghost danger icon" data-del="${p.id}" title="删除">${icon.trash}</button>
+      <button class="btn ghost danger icon" data-del="${p.id}" title="${p.last_applied?'请先取消启用再删除':'删除'}" ${p.last_applied?'disabled':''}>${icon.trash}</button>
     </div>
   </article>`).join('');
   shell(`<section class="hero">
@@ -83,27 +94,32 @@ function editor(){
     last=f.section;
     return `${h}<label class="field-row"><span class="field-label"><b>${esc(f.key)}</b><small title="${esc(f.path.join('.'))}">${esc(f.path.join('.'))}</small></span>${fieldControl(f,i)}</label>`;
   }).join('');
-  shell(`<div class="page-head">
-    <button id="back" class="btn ghost">${icon.back}返回配置列表</button>
-    <div class="head-actions"><button id="save" class="btn">${icon.check}保存</button><button class="btn primary" id="apply">${icon.zap}保存并启用</button></div>
-  </div>
-  <section class="editor-card">
-    <h1>编辑配置</h1>
+  shell(`<section class="editor-card">
+    <h1>${isNew?'新建配置':'编辑配置'}</h1>
     <label class="name-field"><span>配置名称</span><input id="name" type="text" value="${esc(selected?.name??'')}"></label>
     <div class="fields">${form}</div>
   </section>`);
-  document.querySelector('#back')?.addEventListener('click',()=>{view='home';render()});
-  document.querySelector('#save')?.addEventListener('click',save);
-  document.querySelector('#apply')?.addEventListener('click',()=>apply(selected!.id));
 }
 
 function render(){view==='home'?home():editor()}
 async function load(){try{config=await invoke<Config>('load_codex_config');profiles=await invoke<Profile[]>('list_profiles');message='';error='';render()}catch(e){error=String(e);render()}}
 async function resetAll(){try{await invoke('reset_all_enabled');await load();message='所有配置已取消启用';}catch(e){error=String(e);render()}}
-async function create(kind:'current'|'empty'){const name=prompt('配置名称');if(!name)return;try{selected=kind==='current'?await invoke<Profile>('create_profile_from_current',{name}):await invoke<Profile>('create_empty_profile',{name});profiles=await invoke<Profile[]>('list_profiles');await select(selected.id)}catch(e){error=String(e);render()}}
+async function create(kind:'current'|'empty'){try{if(!config){error='尚未加载配置';render();return}
+  const content=kind==='current'?config.content:'# Codex config profile\nmodel = \"\"\nmodel_provider = \"\"\n';
+  fields=await invoke<Field[]>('parse_toml_content',{content});
+  selected={id:'',name:'新配置',file_name:'',created_at:'',updated_at:''};
+  isNew=true;view='editor';message='';error='';render()}catch(e){error=String(e);render()}}
 async function select(id:string){selected=profiles.find(p=>p.id===id);if(!selected)return;try{fields=await invoke<Field[]>('parse_profile_fields',{profileId:id});view='editor';message='';error='';render()}catch(e){error=String(e);render()}}
 function readFields(){document.querySelectorAll<HTMLInputElement|HTMLSelectElement|HTMLTextAreaElement>('[data-field]').forEach(el=>fields[Number(el.dataset.field)].value=el.value);return fields}
-async function save(){if(!selected)return;try{await invoke('save_profile_fields',{profileId:selected.id,name:document.querySelector<HTMLInputElement>('#name')!.value,fields:readFields()});profiles=await invoke<Profile[]>('list_profiles');selected=profiles.find(p=>p.id===selected!.id);message='配置已保存';error='';view='home';render()}catch(e){error=String(e);render()}}
-async function apply(id:string){selected=profiles.find(p=>p.id===id);if(!selected)return;try{if(view==='editor'){await invoke('save_profile_fields',{profileId:selected.id,name:document.querySelector<HTMLInputElement>('#name')?.value??selected.name,fields:readFields()});}if(await invoke<boolean>('is_codex_running')&&!confirm('Codex 正在运行，当前会话不会改变。仍要启用吗？'))return;await invoke('apply_profile',{profileId:id});message=`已启用 ${selected.name}`;view='home';await load()}catch(e){error=String(e);render()}}
-async function remove(id:string){if(!confirm('删除这个 TOML 配置？'))return;try{await invoke('delete_profile',{profileId:id});await load()}catch(e){error=String(e);render()}}
+async function save(){if(!selected)return;try{const name=document.querySelector<HTMLInputElement>('#name')!.value||'新配置';
+  if(isNew){
+    selected=await invoke<Profile>('create_profile_from_current',{name});
+    isNew=false;
+  }
+  await invoke('save_profile_fields',{profileId:selected.id,name,fields:readFields()});
+  profiles=await invoke<Profile[]>('list_profiles');
+  selected=profiles.find(p=>p.id===selected!.id);
+  message='配置已保存';error='';view='home';render()}catch(e){error=String(e);render()}}
+async function apply(id:string){try{if(view==='editor'){if(isNew){const name=document.querySelector<HTMLInputElement>('#name')?.value||'新配置';selected=await invoke<Profile>('create_profile_from_current',{name});isNew=false;id=selected.id;await invoke('save_profile_fields',{profileId:id,name,fields:readFields()});}else{selected=profiles.find(p=>p.id===id);if(!selected)return;await invoke('save_profile_fields',{profileId:id,name:document.querySelector<HTMLInputElement>('#name')?.value??selected.name,fields:readFields()});}}else{selected=profiles.find(p=>p.id===id);if(!selected)return;}await invoke<ApplyResult>('apply_profile',{profileId:id});message=`已启用 ${selected.name}`;view='home';await load()}catch(e){error=String(e);render()}}
+async function remove(id:string){const p=profiles.find(x=>x.id===id);if(p?.last_applied){error='无法删除：该配置当前已启用，请先启用其他配置或点击「全部取消启用」后再删除';render();return}if(!confirm(`删除配置「${p?.name??''}」？`))return;try{await invoke('delete_profile',{profileId:id});await load()}catch(e){error=String(e);render()}}
 load();
