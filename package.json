@@ -1,0 +1,17 @@
+{
+  "name": "codex-provider-switcher",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "dev": "vite"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
+    "png-to-ico": "^3.0.2",
+    "sharp": "^0.35.3",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0"
+  }
+}
