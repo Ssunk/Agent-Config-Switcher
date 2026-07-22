@@ -31,7 +31,7 @@ function shell(content:string){
   const isEditor=view==='editor';
   const topActions=isEditor
     ?`<button id="save" class="btn">${icon.check}保存</button><button id="apply" class="btn primary">${icon.zap}保存并启用</button>`
-    :`<button id="reload" class="btn ghost icon" title="重新加载">${icon.reload}</button><button id="resetAll" class="btn ghost" title="全部取消启用">全部取消启用</button><button id="newCurrent" class="btn primary">${icon.plus}新建配置</button>`;
+    :`<button id="reload" class="btn ghost icon" title="重新加载">${icon.reload}</button><button id="newCurrent" class="btn primary">${icon.plus}新建配置</button>`;
   app.innerHTML=`<header class="topbar">
     <div class="brand">${isEditor?`<button id="back" class="btn ghost icon" title="返回">${icon.back}</button>`:''}<div class="brand-logo">${icon.logo}</div><div><div class="brand-name">Codex Provider Switcher</div><div class="brand-sub">TOML 配置管理</div></div></div>
     <div class="top-actions">${topActions}</div>
@@ -44,7 +44,6 @@ function shell(content:string){
     document.querySelector('#apply')?.addEventListener('click',()=>apply(selected!.id));
   }else{
     document.querySelector('#reload')?.addEventListener('click',load);
-    document.querySelector('#resetAll')?.addEventListener('click',resetAll);
     document.querySelector('#newCurrent')?.addEventListener('click',()=>create('current'));
   }
 }
@@ -144,5 +143,5 @@ async function apply(id:string){try{if(view==='editor'){
     authContent=newContent;
     selected=profiles.find(p=>p.id===id);if(!selected)return;
   }}else{selected=profiles.find(p=>p.id===id);if(!selected)return;}await invoke<ApplyResult>('apply_profile',{profileId:id});message=`已启用 ${selected.name}`;view='home';await load()}catch(e){error=String(e);render()}}
-async function remove(id:string){const p=profiles.find(x=>x.id===id);if(p?.last_applied){error='无法删除：该配置当前已启用，请先启用其他配置或点击「全部取消启用」后再删除';render();return}if(!confirm(`删除配置「${p?.name??''}」？`))return;try{await invoke('delete_profile',{profileId:id});await load()}catch(e){error=String(e);render()}}
+async function remove(id:string){const p=profiles.find(x=>x.id===id);if(p?.last_applied){error='无法删除：该配置当前已启用，请先启用其他配置后再删除';render();return}if(!confirm(`删除配置「${p?.name??''}」？`))return;try{await invoke('delete_profile',{profileId:id});await load()}catch(e){error=String(e);render()}}
 load();
