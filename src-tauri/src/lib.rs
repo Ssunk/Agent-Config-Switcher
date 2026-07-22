@@ -338,6 +338,64 @@ pub mod commands {
         Ok(())
     }
 
+    /// Merge the profile-owned portion into the active config while preserving
+    /// tables that are outside the top-level section and `model_providers.custom`.
+    fn merge_profile_config(active_content: &str, profile_content: &str) -> Result<String, String> {
+        let active = validate_toml(active_content)?;
+        let profile = validate_toml(profile_content)?;
+        let profile_custom = profile
+            .get("model_providers")
+            .and_then(|item| item.as_table())
+            .and_then(|table| table.get("custom"))
+            .cloned();
+
+        let mut merged = DocumentMut::new();
+        // Keep the active file's final whitespace/comments.
+        merged.set_trailing(active.trailing().clone());
+
+        // The profile owns scalar top-level settings (the portion above the
+        // first table header). Other top-level tables are intentionally ignored.
+        for (key, item) in profile.iter() {
+            if !item.is_table() && !item.is_array_of_tables() {
+                merged.insert(key, item.clone());
+            }
+        }
+
+        let mut found_model_providers = false;
+        for (key, item) in active.iter() {
+            if !item.is_table() && !item.is_array_of_tables() {
+                continue;
+            }
+            if key != "model_providers" || !item.is_table() {
+                merged.insert(key, item.clone());
+                continue;
+            }
+
+            found_model_providers = true;
+            let mut providers = item.clone();
+            let table = providers
+                .as_table_mut()
+                .ok_or("model_providers 配置格式错误")?;
+            table.remove("custom");
+            if let Some(custom) = profile_custom.clone() {
+                table.insert("custom", custom);
+            }
+            merged.insert(key, providers);
+        }
+
+        // If the active file has no provider table, add the profile's custom
+        // provider as the only provider table we own.
+        if !found_model_providers {
+            if let Some(custom) = profile_custom {
+                let mut providers = toml_edit::Table::new();
+                providers.insert("custom", custom);
+                merged.insert("model_providers", toml_edit::Item::Table(providers));
+            }
+        }
+
+        Ok(merged.to_string())
+    }
+
     #[tauri::command]
     pub fn save_profile_fields(
         profile_id: String,
@@ -410,8 +468,8 @@ pub mod commands {
             .ok_or("档案不存在")?;
         let profile_path = safe_profile_path(&items[pos].file_name)?;
         let auth_profile_path = safe_profile_auth_path(&profile_id)?;
-        let content = fs::read_to_string(profile_path).map_err(err)?;
-        validate_toml(&content)?;
+        let profile_content = fs::read_to_string(profile_path).map_err(err)?;
+        validate_toml(&profile_content)?;
         let auth_content = if auth_profile_path.exists() {
             let auth = fs::read_to_string(&auth_profile_path).map_err(err)?;
             serde_json::from_str::<serde_json::Value>(&auth)
@@ -424,6 +482,8 @@ pub mod commands {
         if !target.exists() {
             return Err(format!("本地配置不存在: {}", target.display()));
         }
+        let current_content = fs::read_to_string(&target).map_err(err)?;
+        let content = merge_profile_config(&current_content, &profile_content)?;
         write_atomic(&target, &content)?;
         if let Some(auth) = auth_content {
             write_atomic(&auth_json_path(), &auth)?;
@@ -623,6 +683,63 @@ pub mod commands {
             assert!(out.iter().any(|f| f.key == "count" && f.value == "42"));
             assert!(out.iter().any(|f| f.key == "ratio" && f.value == "1.5"));
             assert!(out.iter().any(|f| f.key == "enabled" && f.value == "true"));
+        }
+
+        #[test]
+        fn applying_profile_preserves_unmanaged_tables() {
+            let active = r#"model = "old-model"
+model_provider = "old"
+obsolete_root = true
+
+[model_providers.custom]
+name = "old"
+base_url = "https://old.example"
+
+[model_providers.other]
+name = "other"
+
+[projects.demo]
+trust_level = "trusted"
+
+[features]
+foo = true
+"#;
+            let profile = r#"model = "new-model"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "new"
+base_url = "https://new.example"
+
+[ignored]
+value = "must not be copied"
+"#;
+
+            let merged = merge_profile_config(active, profile).unwrap();
+            let doc = validate_toml(&merged).unwrap();
+            assert_eq!(
+                doc.get("model").and_then(|item| item.as_str()),
+                Some("new-model")
+            );
+            assert_eq!(
+                doc.get("model_provider").and_then(|item| item.as_str()),
+                Some("custom")
+            );
+            assert!(doc.get("obsolete_root").is_none());
+            assert!(doc.get("ignored").is_none());
+            assert_eq!(
+                doc["model_providers"]["custom"]["base_url"].as_str(),
+                Some("https://new.example")
+            );
+            assert_eq!(
+                doc["model_providers"]["other"]["name"].as_str(),
+                Some("other")
+            );
+            assert_eq!(
+                doc["projects"]["demo"]["trust_level"].as_str(),
+                Some("trusted")
+            );
+            assert_eq!(doc["features"]["foo"].as_bool(), Some(true));
         }
 
         #[test]
