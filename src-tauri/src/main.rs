@@ -6,10 +6,8 @@ fn main() {
     tauri::Builder::default()
         .setup(|app| {
             // Build tray menu
-            let show = tauri::menu::MenuItemBuilder::with_id("show", "显示窗口")
-                .build(app)?;
-            let quit = tauri::menu::MenuItemBuilder::with_id("quit", "退出")
-                .build(app)?;
+            let show = tauri::menu::MenuItemBuilder::with_id("show", "显示窗口").build(app)?;
+            let quit = tauri::menu::MenuItemBuilder::with_id("quit", "退出").build(app)?;
             let menu = tauri::menu::MenuBuilder::new(app)
                 .item(&show)
                 .item(&quit)
@@ -73,7 +71,9 @@ fn main() {
             codex_provider_switcher_lib::commands::get_config_path,
             codex_provider_switcher_lib::commands::set_config_path,
             codex_provider_switcher_lib::commands::load_auth_json,
+            codex_provider_switcher_lib::commands::load_profile_auth,
             codex_provider_switcher_lib::commands::save_auth_json,
+            codex_provider_switcher_lib::commands::save_profile_auth,
             codex_provider_switcher_lib::commands::parse_auth_content,
             codex_provider_switcher_lib::commands::save_auth_fields,
             codex_provider_switcher_lib::commands::open_config_directory,

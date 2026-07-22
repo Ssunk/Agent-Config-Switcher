@@ -6,8 +6,19 @@ type ApplyResult={applied_path:string};
 declare global { interface Window { __TAURI__?:{core:{invoke<T>(name:string,args?:Record<string,unknown>):Promise<T>}} } }
 const invoke=async<T>(n:string,a?:Record<string,unknown>)=>window.__TAURI__?.core.invoke<T>(n,a)??Promise.reject(new Error('请在 Tauri 应用中运行'));
 const app=document.querySelector<HTMLElement>('#app')!;
-let config:Config|undefined; let profiles:Profile[]=[]; let selected:Profile|undefined; let fields:Field[]=[]; let view:'home'|'editor'='home'; let message=''; let error=''; let isNew=false; let activeTab:'fields'|'auth'='fields'; let authContent=''; let authFields:Field[]=[];
+let config:Config|undefined; let profiles:Profile[]=[]; let selected:Profile|undefined; let fields:Field[]=[]; let view:'home'|'editor'='home'; let message=''; let error=''; let messageTimer:number|undefined; let isNew=false; let activeTab:'fields'|'auth'='fields'; let draftName=''; let authContent=''; let authFields:Field[]=[];
 const esc=(s:string)=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
+
+function showMessage(text:string){
+  if(messageTimer!==undefined)window.clearTimeout(messageTimer);
+  message=text;
+  error='';
+  render();
+  messageTimer=window.setTimeout(()=>{
+    if(message===text){message='';render();}
+    messageTimer=undefined;
+  },3000);
+}
 
 const svg=(p:string)=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
 const icon={
@@ -97,13 +108,17 @@ function readAuthFields(){document.querySelectorAll<HTMLInputElement|HTMLSelectE
 
 function editor(){
   const tabContent=activeTab==='fields'
-    ?`<div><label class="name-field"><span>配置名称</span><input id="name" type="text" value="${esc(selected?.name??'')}"></label><div class="fields">${renderFieldsTab()}</div></div>`
+    ?`<div><label class="name-field"><span>配置名称</span><input id="name" type="text" value="${esc(draftName)}"></label><div class="fields">${renderFieldsTab()}</div></div>`
     :`<div class="fields">${renderAuthTab()}</div>`;
   shell(`<section class="editor-card">
     <div class="tabs"><button class="tab ${activeTab==='fields'?'active':''}" data-tab="fields">${icon.edit} 配置字段</button><button class="tab ${activeTab==='auth'?'active':''}" data-tab="auth">${icon.file} auth.json</button></div>
     ${tabContent}
   </section>`);
-  document.querySelectorAll<HTMLElement>('.tab').forEach(x=>x.onclick=()=>{if(activeTab==='auth')readAuthFields();activeTab=x.dataset.tab as 'fields'|'auth';editor()});
+  document.querySelectorAll<HTMLElement>('.tab').forEach(x=>x.onclick=()=>{
+    if(activeTab==='auth')readAuthFields();else{draftName=readName();readFields();}
+    activeTab=x.dataset.tab as 'fields'|'auth';
+    editor();
+  });
 }
 
 function filterFields(all:Field[]):Field[]{
@@ -112,36 +127,30 @@ function filterFields(all:Field[]):Field[]{
 function render(){view==='home'?home():editor()}
 async function load(){try{config=await invoke<Config>('load_codex_config');profiles=await invoke<Profile[]>('list_profiles');message='';error='';render()}catch(e){error=String(e);render()}}
 async function resetAll(){try{await invoke('reset_all_enabled');await load();message='所有配置已取消启用';}catch(e){error=String(e);render()}}
-async function loadAuth(){try{authContent=await invoke<string>('load_auth_json');authFields=await invoke<Field[]>('parse_auth_content',{content:authContent})}catch(e){authContent='{}';authFields=[]}}
+async function loadAuth(profileId?:string){try{authContent=await invoke<string>(profileId?'load_profile_auth':'load_auth_json',profileId?{profileId}:undefined);authFields=await invoke<Field[]>('parse_auth_content',{content:authContent})}catch(e){authContent='{}';authFields=[]}}
 async function create(kind:'current'|'empty'){try{if(!config){error='尚未加载配置';render();return}
   const content=kind==='current'?config.content:'# Codex config profile\nmodel = \"\"\nmodel_provider = \"\"\n';
   fields=filterFields(await invoke<Field[]>('parse_toml_content',{content}));
-  selected={id:'',name:'新配置',file_name:'',created_at:'',updated_at:''};
+  selected={id:'',name:'新配置',file_name:'',created_at:'',updated_at:''};draftName=selected.name;
   isNew=true;view='editor';activeTab='fields';await loadAuth();message='';error='';render()}catch(e){error=String(e);render()}}
-async function select(id:string){selected=profiles.find(p=>p.id===id);if(!selected)return;try{fields=filterFields(await invoke<Field[]>('parse_profile_fields',{profileId:id}));view='editor';activeTab='fields';await loadAuth();message='';error='';render()}catch(e){error=String(e);render()}}
+async function select(id:string){selected=profiles.find(p=>p.id===id);if(!selected)return;try{draftName=selected.name;fields=filterFields(await invoke<Field[]>('parse_profile_fields',{profileId:id}));view='editor';activeTab='fields';await loadAuth(id);message='';error='';render()}catch(e){error=String(e);render()}}
 function readFields(){document.querySelectorAll<HTMLInputElement|HTMLSelectElement|HTMLTextAreaElement>('[data-field]').forEach(el=>fields[Number(el.dataset.field)].value=el.value);return fields}
-async function save(){if(!selected)return;try{if(activeTab==='fields'){
-  const name=document.querySelector<HTMLInputElement>('#name')?.value||'新配置';
+function readName(){return document.querySelector<HTMLInputElement>('#name')?.value.trim()||draftName||selected?.name||'新配置'}
+async function saveEditorSnapshot():Promise<Profile>{
+  if(!selected)throw new Error('尚未选择配置');
+  const name=readName();
   if(isNew){selected=await invoke<Profile>('create_profile_from_current',{name});isNew=false;}
   await invoke('save_profile_fields',{profileId:selected.id,name,fields:readFields()});
-  profiles=await invoke<Profile[]>('list_profiles');
-  selected=profiles.find(p=>p.id===selected!.id);
-}else{
   readAuthFields();
   const newContent=await invoke<string>('save_auth_fields',{content:authContent,fields:authFields});
-  await invoke('save_auth_json',{content:newContent});
+  await invoke('save_profile_auth',{profileId:selected.id,content:newContent});
   authContent=newContent;
-}message='配置已保存';error='';view='home';render()}catch(e){error=String(e);render()}}
-async function apply(id:string){try{if(view==='editor'){
-  if(activeTab==='fields'){
-    const name=document.querySelector<HTMLInputElement>('#name')?.value||'新配置';
-    if(isNew){selected=await invoke<Profile>('create_profile_from_current',{name});isNew=false;id=selected.id;await invoke('save_profile_fields',{profileId:id,name,fields:readFields()});}else{selected=profiles.find(p=>p.id===id);if(!selected)return;await invoke('save_profile_fields',{profileId:id,name:document.querySelector<HTMLInputElement>('#name')?.value??selected.name,fields:readFields()});}
-  }else{
-    readAuthFields();
-    const newContent=await invoke<string>('save_auth_fields',{content:authContent,fields:authFields});
-    await invoke('save_auth_json',{content:newContent});
-    authContent=newContent;
-    selected=profiles.find(p=>p.id===id);if(!selected)return;
-  }}else{selected=profiles.find(p=>p.id===id);if(!selected)return;}await invoke<ApplyResult>('apply_profile',{profileId:id});message=`已启用 ${selected.name}`;view='home';await load()}catch(e){error=String(e);render()}}
+  profiles=await invoke<Profile[]>('list_profiles');
+  selected=profiles.find(p=>p.id===selected!.id)??selected;
+  draftName=selected.name;
+  return selected;
+}
+async function save(){if(!selected)return;try{await saveEditorSnapshot();view='home';showMessage('配置已保存')}catch(e){error=String(e);render()}}
+async function apply(id:string){try{if(view==='editor'){selected=selected?.id===id?selected:profiles.find(p=>p.id===id);if(!selected)return;selected=await saveEditorSnapshot();id=selected.id;}else{selected=profiles.find(p=>p.id===id);if(!selected)return;}await invoke<ApplyResult>('apply_profile',{profileId:id});message=`已启用 ${selected.name}`;view='home';await load()}catch(e){error=String(e);render()}}
 async function remove(id:string){const p=profiles.find(x=>x.id===id);if(p?.last_applied){error='无法删除：该配置当前已启用，请先启用其他配置后再删除';render();return}if(!confirm(`删除配置「${p?.name??''}」？`))return;try{await invoke('delete_profile',{profileId:id});await load()}catch(e){error=String(e);render()}}
 load();
