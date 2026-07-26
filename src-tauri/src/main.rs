@@ -37,7 +37,7 @@ fn main() {
             // Build system tray
             tauri::tray::TrayIconBuilder::new()
                 .icon(icon)
-                .tooltip("Provider Switcher")
+                .tooltip("Agent Config Switcher")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {
@@ -71,36 +71,36 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            codex_provider_switcher_lib::commands::load_codex_config,
-            codex_provider_switcher_lib::commands::list_profiles,
-            codex_provider_switcher_lib::commands::create_profile_from_current,
-            codex_provider_switcher_lib::commands::create_empty_profile,
-            codex_provider_switcher_lib::commands::load_profile,
-            codex_provider_switcher_lib::commands::parse_profile_fields,
-            codex_provider_switcher_lib::commands::parse_toml_content,
-            codex_provider_switcher_lib::commands::save_profile_toml,
-            codex_provider_switcher_lib::commands::save_profile_fields,
-            codex_provider_switcher_lib::commands::delete_profile,
-            codex_provider_switcher_lib::commands::apply_profile,
-            codex_provider_switcher_lib::commands::get_config_path,
-            codex_provider_switcher_lib::commands::set_config_path,
-            codex_provider_switcher_lib::commands::load_auth_json,
-            codex_provider_switcher_lib::commands::load_profile_auth,
-            codex_provider_switcher_lib::commands::save_auth_json,
-            codex_provider_switcher_lib::commands::save_profile_auth,
-            codex_provider_switcher_lib::commands::parse_auth_content,
-            codex_provider_switcher_lib::commands::parse_json_content,
-            codex_provider_switcher_lib::commands::save_auth_fields,
-            codex_provider_switcher_lib::commands::open_config_directory,
-            codex_provider_switcher_lib::commands::reset_all_enabled,
-            codex_provider_switcher_lib::commands::load_claude_config,
-            codex_provider_switcher_lib::commands::list_claude_profiles,
-            codex_provider_switcher_lib::commands::create_claude_profile_from_current,
-            codex_provider_switcher_lib::commands::parse_claude_profile_fields,
-            codex_provider_switcher_lib::commands::save_claude_profile_fields,
-            codex_provider_switcher_lib::commands::delete_claude_profile,
-            codex_provider_switcher_lib::commands::apply_claude_profile,
-            codex_provider_switcher_lib::commands::open_claude_config_directory,
+            agent_config_switcher_lib::commands::load_codex_config,
+            agent_config_switcher_lib::commands::list_profiles,
+            agent_config_switcher_lib::commands::create_profile_from_current,
+            agent_config_switcher_lib::commands::create_empty_profile,
+            agent_config_switcher_lib::commands::load_profile,
+            agent_config_switcher_lib::commands::parse_profile_fields,
+            agent_config_switcher_lib::commands::parse_toml_content,
+            agent_config_switcher_lib::commands::save_profile_toml,
+            agent_config_switcher_lib::commands::save_profile_fields,
+            agent_config_switcher_lib::commands::delete_profile,
+            agent_config_switcher_lib::commands::apply_profile,
+            agent_config_switcher_lib::commands::get_config_path,
+            agent_config_switcher_lib::commands::set_config_path,
+            agent_config_switcher_lib::commands::load_auth_json,
+            agent_config_switcher_lib::commands::load_profile_auth,
+            agent_config_switcher_lib::commands::save_auth_json,
+            agent_config_switcher_lib::commands::save_profile_auth,
+            agent_config_switcher_lib::commands::parse_auth_content,
+            agent_config_switcher_lib::commands::parse_json_content,
+            agent_config_switcher_lib::commands::save_auth_fields,
+            agent_config_switcher_lib::commands::open_config_directory,
+            agent_config_switcher_lib::commands::reset_all_enabled,
+            agent_config_switcher_lib::commands::load_claude_config,
+            agent_config_switcher_lib::commands::list_claude_profiles,
+            agent_config_switcher_lib::commands::create_claude_profile_from_current,
+            agent_config_switcher_lib::commands::parse_claude_profile_fields,
+            agent_config_switcher_lib::commands::save_claude_profile_fields,
+            agent_config_switcher_lib::commands::delete_claude_profile,
+            agent_config_switcher_lib::commands::apply_claude_profile,
+            agent_config_switcher_lib::commands::open_claude_config_directory,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tauri application");

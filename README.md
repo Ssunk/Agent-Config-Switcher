@@ -1,4 +1,4 @@
-# Codex Provider Switcher
+# Agent Config Switcher
 
 Windows-first Tauri 2 desktop app for safely switching Codex and Claude Code configurations.
 

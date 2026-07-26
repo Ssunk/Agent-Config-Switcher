@@ -68,7 +68,7 @@ function shell(content:string){
     ?`<button id="save" class="btn">${icon.check}保存</button><button id="apply" class="btn primary">${icon.zap}保存并启用</button>`
     :`<button id="reload" class="btn ghost icon" title="重新加载">${icon.reload}</button><button id="newCurrent" class="btn primary">${icon.plus}新建配置</button>`;
   app.innerHTML=`<header class="topbar">
-    <div class="brand">${isEditor?`<button id="back" class="btn ghost icon" title="返回">${icon.back}</button>`:''}<div class="brand-logo">${icon.logo}</div><div><div class="brand-name">Provider Switcher</div><div class="brand-sub">${info.name} ${info.format} 配置管理</div></div></div>
+    <div class="brand">${isEditor?`<button id="back" class="btn ghost icon" title="返回">${icon.back}</button>`:''}<div class="brand-logo">${icon.logo}</div><div><div class="brand-name">Agent Config Switcher</div><div class="brand-sub">${info.name} ${info.format} 配置管理</div></div></div>
     <div class="product-switch" role="tablist" aria-label="配置类型"><button class="product-option ${product==='codex'?'active':''}" data-product="codex">Codex</button><button class="product-option ${product==='claude'?'active':''}" data-product="claude">Claude Code</button></div>
     <div class="top-actions">${topActions}</div>
   </header>

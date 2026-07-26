@@ -474,7 +474,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "codex-provider-switcher"
+name = "agent-config-switcher"
 version = "0.1.0"
 dependencies = [
  "chrono",

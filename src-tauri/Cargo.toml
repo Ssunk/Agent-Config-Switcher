@@ -1,9 +1,9 @@
 [package]
-name = "codex-provider-switcher"
+name = "agent-config-switcher"
 version = "0.1.0"
 edition = "2021"
 [lib]
-name = "codex_provider_switcher_lib"
+name = "agent_config_switcher_lib"
 crate-type = ["cdylib", "rlib"]
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }

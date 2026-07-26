@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Codex Provider Switcher is a Windows-first Tauri 2 desktop application for managing and applying Codex configuration profiles. The UI is written in framework-free TypeScript and CSS; Rust owns filesystem access, TOML/JSON parsing, profile persistence, atomic replacement, and the system tray.
+Agent Config Switcher is a Windows-first Tauri 2 desktop application for managing and applying Codex and Claude Code configuration profiles. The UI is written in framework-free TypeScript and CSS; Rust owns filesystem access, TOML/JSON parsing, profile persistence, atomic replacement, and the system tray.
 
 The interface is Chinese. Keep new user-facing copy consistent with the surrounding Chinese text, while code identifiers and developer documentation should remain in English.
 
