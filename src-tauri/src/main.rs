@@ -37,7 +37,7 @@ fn main() {
             // Build system tray
             tauri::tray::TrayIconBuilder::new()
                 .icon(icon)
-                .tooltip("Codex Provider Switcher")
+                .tooltip("Provider Switcher")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {
@@ -89,9 +89,18 @@ fn main() {
             codex_provider_switcher_lib::commands::save_auth_json,
             codex_provider_switcher_lib::commands::save_profile_auth,
             codex_provider_switcher_lib::commands::parse_auth_content,
+            codex_provider_switcher_lib::commands::parse_json_content,
             codex_provider_switcher_lib::commands::save_auth_fields,
             codex_provider_switcher_lib::commands::open_config_directory,
             codex_provider_switcher_lib::commands::reset_all_enabled,
+            codex_provider_switcher_lib::commands::load_claude_config,
+            codex_provider_switcher_lib::commands::list_claude_profiles,
+            codex_provider_switcher_lib::commands::create_claude_profile_from_current,
+            codex_provider_switcher_lib::commands::parse_claude_profile_fields,
+            codex_provider_switcher_lib::commands::save_claude_profile_fields,
+            codex_provider_switcher_lib::commands::delete_claude_profile,
+            codex_provider_switcher_lib::commands::apply_claude_profile,
+            codex_provider_switcher_lib::commands::open_claude_config_directory,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tauri application");

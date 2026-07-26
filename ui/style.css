@@ -121,6 +121,39 @@ button { font-family: inherit; }
 
 .top-actions { display: flex; align-items: center; gap: 10px; }
 
+.product-switch {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: rgba(0, 0, 0, 0.24);
+}
+
+.product-option {
+  min-width: 88px;
+  padding: 6px 11px;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--text-2);
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.product-option:hover { color: var(--text-1); }
+.product-option.active {
+  color: #fff;
+  background: var(--surface-3);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+.product-option:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-ring);
+}
+
 /* ============================================================
    Buttons
    ============================================================ */
@@ -451,7 +484,7 @@ button { font-family: inherit; }
 
 .editor-card > h1 { margin: 0 0 18px; font-size: 19px; font-weight: 700; }
 
-.name-field { display: block; max-width: 420px; margin-bottom: 6px; }
+.name-field { display: block; max-width: 420px; margin-bottom: 20px; }
 .name-field > span {
   display: block;
   font-size: 12.5px;
@@ -530,6 +563,12 @@ textarea.array-input {
 }
 .field-row:last-child { border-bottom: none; }
 
+.field-empty {
+  padding: 56px 16px;
+  text-align: center;
+  color: var(--text-3);
+}
+
 .field-label { min-width: 0; }
 .field-label b { display: block; font-size: 13.5px; font-weight: 600; }
 .field-label small {
@@ -604,6 +643,7 @@ textarea.auth-editor:focus {
 @media (max-width: 720px) {
   .topbar { padding: 0 14px; }
   .brand-sub { display: none; }
+  .product-option { min-width: 72px; padding-inline: 8px; }
   .page { padding: 18px 14px 50px; }
   .hero { flex-wrap: wrap; }
   .card { flex-wrap: wrap; }

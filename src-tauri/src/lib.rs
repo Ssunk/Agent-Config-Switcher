@@ -52,6 +52,16 @@ pub mod commands {
             .join("config.toml")
     }
 
+    fn claude_config_path() -> PathBuf {
+        if let Ok(path) = std::env::var("CLAUDE_CONFIG_PATH") {
+            return PathBuf::from(path);
+        }
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".claude")
+            .join("settings.json")
+    }
+
     fn profiles_dir() -> PathBuf {
         config_path()
             .parent()
@@ -61,6 +71,15 @@ pub mod commands {
     fn index_path() -> PathBuf {
         profiles_dir().join("profiles.json")
     }
+    fn claude_profiles_dir() -> PathBuf {
+        claude_config_path()
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join("config-profiles")
+    }
+    fn claude_index_path() -> PathBuf {
+        claude_profiles_dir().join("profiles.json")
+    }
     fn err(e: impl std::fmt::Display) -> String {
         e.to_string()
     }
@@ -69,15 +88,53 @@ pub mod commands {
             .parse::<DocumentMut>()
             .map_err(|e| format!("TOML 格式错误: {e}"))
     }
-    fn read_index() -> Result<Vec<TomlProfile>, String> {
-        if !index_path().exists() {
+    fn validate_json(content: &str) -> Result<serde_json::Value, String> {
+        serde_json::from_str(content).map_err(|e| format!("JSON 格式错误: {e}"))
+    }
+    fn claude_env_document(content: &str) -> Result<serde_json::Value, String> {
+        let settings = validate_json(content)?;
+        let settings = settings
+            .as_object()
+            .ok_or("Claude Code settings.json 必须是 JSON 对象")?;
+        let env = settings
+            .get("env")
+            .cloned()
+            .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+        if !env.is_object() {
+            return Err("Claude Code settings.json 中的 env 必须是 JSON 对象".into());
+        }
+        Ok(serde_json::json!({ "env": env }))
+    }
+    fn merge_claude_env(active_content: &str, profile_content: &str) -> Result<String, String> {
+        let mut active = validate_json(active_content)?;
+        let active = active
+            .as_object_mut()
+            .ok_or("Claude Code settings.json 必须是 JSON 对象")?;
+        let profile = claude_env_document(profile_content)?;
+        active.insert("env".into(), profile["env"].clone());
+        serde_json::to_string_pretty(&active).map_err(|error| format!("序列化 JSON 失败: {error}"))
+    }
+    fn read_index_at(path: &Path) -> Result<Vec<TomlProfile>, String> {
+        if !path.exists() {
             return Ok(Vec::new());
         }
-        serde_json::from_str(&fs::read_to_string(index_path()).map_err(err)?).map_err(err)
+        serde_json::from_str(&fs::read_to_string(path).map_err(err)?).map_err(err)
+    }
+    fn read_index() -> Result<Vec<TomlProfile>, String> {
+        read_index_at(&index_path())
+    }
+    fn read_claude_index() -> Result<Vec<TomlProfile>, String> {
+        read_index_at(&claude_index_path())
     }
     fn write_index(items: &[TomlProfile]) -> Result<(), String> {
         fs::create_dir_all(profiles_dir()).map_err(err)?;
-        fs::write(index_path(), serde_json::to_vec_pretty(items).map_err(err)?).map_err(err)
+        let content = serde_json::to_string_pretty(items).map_err(err)?;
+        write_atomic(&index_path(), &content)
+    }
+    fn write_claude_index(items: &[TomlProfile]) -> Result<(), String> {
+        fs::create_dir_all(claude_profiles_dir()).map_err(err)?;
+        let content = serde_json::to_string_pretty(items).map_err(err)?;
+        write_atomic(&claude_index_path(), &content)
     }
     fn safe_profile_path(file_name: &str) -> Result<PathBuf, String> {
         if file_name.contains(['/', '\\']) || !file_name.ends_with(".toml") {
@@ -91,11 +148,28 @@ pub mod commands {
         }
         Ok(profiles_dir().join(format!("{profile_id}.auth.json")))
     }
+    fn safe_claude_profile_path(file_name: &str) -> Result<PathBuf, String> {
+        let path = Path::new(file_name);
+        let id = path.file_stem().and_then(|value| value.to_str());
+        if file_name.contains(['/', '\\'])
+            || path.extension().and_then(|value| value.to_str()) != Some("json")
+            || id.and_then(|value| Uuid::parse_str(value).ok()).is_none()
+        {
+            return Err("非法 Claude Code 配置文件名".into());
+        }
+        Ok(claude_profiles_dir().join(file_name))
+    }
     fn find_profile(profile_id: &str) -> Result<TomlProfile, String> {
         read_index()?
             .into_iter()
             .find(|p| p.id == profile_id)
             .ok_or_else(|| "档案不存在".into())
+    }
+    fn find_claude_profile(profile_id: &str) -> Result<TomlProfile, String> {
+        read_claude_index()?
+            .into_iter()
+            .find(|profile| profile.id == profile_id)
+            .ok_or_else(|| "Claude Code 配置不存在".into())
     }
     fn write_atomic(path: &Path, content: &str) -> Result<(), String> {
         let parent = path.parent().ok_or("目标路径没有父目录")?;
@@ -554,7 +628,8 @@ pub mod commands {
                         serde_json::Value::String(_) => "string",
                         serde_json::Value::Number(_) => "number",
                         serde_json::Value::Bool(_) => "boolean",
-                        _ => "other",
+                        serde_json::Value::Array(_) | serde_json::Value::Null => "json",
+                        serde_json::Value::Object(_) => unreachable!(),
                     }
                     .to_string();
                     let value_str = match val {
@@ -609,12 +684,17 @@ pub mod commands {
         let key = path.last().unwrap();
         let new_val: serde_json::Value = match kind {
             "string" => serde_json::Value::String(val.to_string()),
-            "number" => val
-                .parse::<f64>()
-                .map(|n| serde_json::json!(n))
-                .unwrap_or_else(|_| serde_json::Value::String(val.to_string())),
+            "number" => {
+                let parsed = validate_json(val)?;
+                if !parsed.is_number() {
+                    return Err(format!("{} 需要填写有效数字", path.join(".")));
+                }
+                parsed
+            }
             "boolean" => serde_json::Value::Bool(val == "true"),
-            _ => serde_json::Value::String(val.to_string()),
+            "json" | "other" => validate_json(val)
+                .map_err(|error| format!("{} 的值格式错误: {error}", path.join(".")))?,
+            _ => return Err(format!("不支持的 JSON 字段类型: {kind}")),
         };
         if let Some(obj) = current.as_object_mut() {
             obj.insert(key.clone(), new_val);
@@ -624,8 +704,12 @@ pub mod commands {
 
     #[tauri::command]
     pub fn parse_auth_content(content: String) -> Result<Vec<TomlField>, String> {
-        let value: serde_json::Value =
-            serde_json::from_str(&content).map_err(|e| format!("JSON 格式错误: {e}"))?;
+        parse_json_content(content)
+    }
+
+    #[tauri::command]
+    pub fn parse_json_content(content: String) -> Result<Vec<TomlField>, String> {
+        let value = validate_json(&content)?;
         let mut out = Vec::new();
         let mut path = Vec::new();
         collect_json_fields(&value, &mut path, &mut out);
@@ -643,10 +727,163 @@ pub mod commands {
     }
 
     #[tauri::command]
+    pub fn load_claude_config() -> Result<ConfigInfo, String> {
+        let path = claude_config_path();
+        let settings_content =
+            fs::read_to_string(&path).map_err(|e| format!("无法读取 {}: {e}", path.display()))?;
+        let value = validate_json(&settings_content)?;
+        let env = value.get("env").and_then(serde_json::Value::as_object);
+        let content = serde_json::to_string_pretty(&claude_env_document(&settings_content)?)
+            .map_err(|error| format!("序列化 JSON 失败: {error}"))?;
+        Ok(ConfigInfo {
+            path: path.display().to_string(),
+            model: env
+                .and_then(|values| values.get("ANTHROPIC_MODEL"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned),
+            provider: env
+                .and_then(|values| values.get("ANTHROPIC_BASE_URL"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned),
+            content,
+        })
+    }
+
+    #[tauri::command]
+    pub fn list_claude_profiles() -> Result<Vec<TomlProfile>, String> {
+        read_claude_index()
+    }
+
+    #[tauri::command]
+    pub fn create_claude_profile_from_current(name: String) -> Result<TomlProfile, String> {
+        if name.trim().is_empty() {
+            return Err("配置名称不能为空".into());
+        }
+        let current = load_claude_config()?;
+        let now = Utc::now().to_rfc3339();
+        let id = Uuid::new_v4().to_string();
+        let profile = TomlProfile {
+            id: id.clone(),
+            name: name.trim().to_owned(),
+            file_name: format!("{id}.json"),
+            created_at: now.clone(),
+            updated_at: now,
+            last_applied: None,
+        };
+        fs::create_dir_all(claude_profiles_dir()).map_err(err)?;
+        write_atomic(
+            &safe_claude_profile_path(&profile.file_name)?,
+            &current.content,
+        )?;
+        let mut items = read_claude_index()?;
+        items.push(profile.clone());
+        write_claude_index(&items)?;
+        Ok(profile)
+    }
+
+    #[tauri::command]
+    pub fn parse_claude_profile_fields(profile_id: String) -> Result<Vec<TomlField>, String> {
+        let profile = find_claude_profile(&profile_id)?;
+        let content = fs::read_to_string(safe_claude_profile_path(&profile.file_name)?)
+            .map_err(|error| format!("无法读取 Claude Code 配置: {error}"))?;
+        let content = serde_json::to_string(&claude_env_document(&content)?).map_err(err)?;
+        parse_json_content(content)
+    }
+
+    #[tauri::command]
+    pub fn save_claude_profile_fields(
+        profile_id: String,
+        name: String,
+        fields: Vec<TomlField>,
+    ) -> Result<(), String> {
+        let mut items = read_claude_index()?;
+        let profile = items
+            .iter_mut()
+            .find(|profile| profile.id == profile_id)
+            .ok_or("Claude Code 配置不存在")?;
+        let path = safe_claude_profile_path(&profile.file_name)?;
+        let content = fs::read_to_string(&path)
+            .map_err(|error| format!("无法读取 Claude Code 配置: {error}"))?;
+        let mut value = validate_json(&content)?;
+        for field in &fields {
+            set_json_value(&mut value, &field.path, &field.kind, &field.value)?;
+        }
+        let content = serde_json::to_string_pretty(&claude_env_document(&value.to_string())?)
+            .map_err(|error| format!("序列化 JSON 失败: {error}"))?;
+        if !name.trim().is_empty() {
+            profile.name = name.trim().to_owned();
+        }
+        profile.updated_at = Utc::now().to_rfc3339();
+        write_atomic(&path, &content)?;
+        write_claude_index(&items)
+    }
+
+    #[tauri::command]
+    pub fn delete_claude_profile(profile_id: String) -> Result<(), String> {
+        let mut items = read_claude_index()?;
+        let position = items
+            .iter()
+            .position(|profile| profile.id == profile_id)
+            .ok_or("Claude Code 配置不存在")?;
+        if items[position].last_applied.is_some() {
+            return Err("无法删除：该配置当前已启用，请先启用其他配置".into());
+        }
+        let profile = items.remove(position);
+        let path = safe_claude_profile_path(&profile.file_name)?;
+        if path.exists() {
+            fs::remove_file(path).map_err(err)?;
+        }
+        write_claude_index(&items)
+    }
+
+    #[tauri::command]
+    pub fn apply_claude_profile(profile_id: String) -> Result<ApplyResult, String> {
+        let mut items = read_claude_index()?;
+        let position = items
+            .iter()
+            .position(|profile| profile.id == profile_id)
+            .ok_or("Claude Code 配置不存在")?;
+        let profile_path = safe_claude_profile_path(&items[position].file_name)?;
+        let profile_content = fs::read_to_string(profile_path)
+            .map_err(|error| format!("无法读取 Claude Code 配置: {error}"))?;
+        claude_env_document(&profile_content)?;
+
+        let target = claude_config_path();
+        if !target.exists() {
+            return Err(format!("本地配置不存在: {}", target.display()));
+        }
+        let active_content = fs::read_to_string(&target)
+            .map_err(|error| format!("无法读取 {}: {error}", target.display()))?;
+        let content = merge_claude_env(&active_content, &profile_content)?;
+        write_atomic(&target, &content)?;
+
+        for profile in &mut items {
+            profile.last_applied = None;
+        }
+        let profile = &mut items[position];
+        profile.last_applied = Some(Utc::now().to_rfc3339());
+        profile.updated_at = Utc::now().to_rfc3339();
+        write_claude_index(&items)?;
+        Ok(ApplyResult {
+            applied_path: target.display().to_string(),
+        })
+    }
+
+    #[tauri::command]
     pub fn open_config_directory() -> Result<(), String> {
         let p = config_path();
         std::process::Command::new("explorer")
             .arg(p.parent().unwrap_or(Path::new(".")))
+            .spawn()
+            .map(|_| ())
+            .map_err(err)
+    }
+
+    #[tauri::command]
+    pub fn open_claude_config_directory() -> Result<(), String> {
+        let path = claude_config_path();
+        std::process::Command::new("explorer")
+            .arg(path.parent().unwrap_or(Path::new(".")))
             .spawn()
             .map(|_| ())
             .map_err(err)
@@ -665,6 +902,30 @@ pub mod commands {
     mod tests {
         use super::*;
 
+        static CLAUDE_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+        struct ClaudeConfigPathGuard(Option<std::ffi::OsString>);
+
+        impl ClaudeConfigPathGuard {
+            fn set(path: Option<&Path>) -> Self {
+                let previous = std::env::var_os("CLAUDE_CONFIG_PATH");
+                match path {
+                    Some(path) => std::env::set_var("CLAUDE_CONFIG_PATH", path),
+                    None => std::env::remove_var("CLAUDE_CONFIG_PATH"),
+                }
+                Self(previous)
+            }
+        }
+
+        impl Drop for ClaudeConfigPathGuard {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(path) => std::env::set_var("CLAUDE_CONFIG_PATH", path),
+                    None => std::env::remove_var("CLAUDE_CONFIG_PATH"),
+                }
+            }
+        }
+
         #[test]
         fn invalid_toml_is_rejected() {
             assert!(validate_toml("[bad").is_err());
@@ -676,6 +937,17 @@ pub mod commands {
         }
 
         #[test]
+        fn default_claude_path_is_settings_json() {
+            let _lock = CLAUDE_ENV_LOCK.lock().unwrap();
+            let _guard = ClaudeConfigPathGuard::set(None);
+            assert_eq!(claude_config_path().file_name().unwrap(), "settings.json");
+            assert_eq!(
+                claude_config_path().parent().unwrap().file_name().unwrap(),
+                ".claude"
+            );
+        }
+
+        #[test]
         fn scalar_numbers_are_exposed() {
             let doc = validate_toml("count = 42\nratio = 1.5\nenabled = true").unwrap();
             let mut out = Vec::new();
@@ -683,6 +955,21 @@ pub mod commands {
             assert!(out.iter().any(|f| f.key == "count" && f.value == "42"));
             assert!(out.iter().any(|f| f.key == "ratio" && f.value == "1.5"));
             assert!(out.iter().any(|f| f.key == "enabled" && f.value == "true"));
+        }
+
+        #[test]
+        fn json_array_fields_remain_arrays_when_edited() {
+            let mut value = validate_json(r#"{"permissions":{"allow":["Read"]}}"#).unwrap();
+            let mut fields = Vec::new();
+            collect_json_fields(&value, &mut Vec::new(), &mut fields);
+            let field = fields
+                .iter_mut()
+                .find(|field| field.key == "allow")
+                .unwrap();
+            assert_eq!(field.kind, "json");
+            field.value = r#"["Read","Write"]"#.into();
+            set_json_value(&mut value, &field.path, &field.kind, &field.value).unwrap();
+            assert_eq!(value["permissions"]["allow"][1], "Write");
         }
 
         #[test]
@@ -778,6 +1065,66 @@ value = "must not be copied"
 
             apply_profile(profile.id).unwrap();
             assert_eq!(fs::read_to_string(auth).unwrap(), r#"{"token":"saved"}"#);
+        }
+
+        #[test]
+        fn claude_profile_only_switches_env_when_applied() {
+            let _lock = CLAUDE_ENV_LOCK.lock().unwrap();
+            let temp = tempfile::tempdir().unwrap();
+            let settings = temp.path().join("settings.json");
+            fs::write(
+                &settings,
+                r#"{"env":{"ANTHROPIC_MODEL":"active"},"permissions":{"allow":["Read"]},"theme":"dark"}"#,
+            )
+            .unwrap();
+            let _guard = ClaudeConfigPathGuard::set(Some(&settings));
+
+            let first = create_claude_profile_from_current("配置一".into()).unwrap();
+            let stored = validate_json(
+                &fs::read_to_string(safe_claude_profile_path(&first.file_name).unwrap()).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(stored.as_object().unwrap().len(), 1);
+
+            let mut fields = parse_claude_profile_fields(first.id.clone()).unwrap();
+            fields
+                .iter_mut()
+                .find(|field| field.key == "ANTHROPIC_MODEL")
+                .unwrap()
+                .value = "saved".into();
+            save_claude_profile_fields(first.id.clone(), first.name.clone(), fields).unwrap();
+            let second = create_claude_profile_from_current("配置二".into()).unwrap();
+
+            assert_eq!(
+                validate_json(&fs::read_to_string(&settings).unwrap()).unwrap()["env"]
+                    ["ANTHROPIC_MODEL"],
+                "active"
+            );
+            apply_claude_profile(first.id.clone()).unwrap();
+            assert_eq!(
+                validate_json(&fs::read_to_string(&settings).unwrap()).unwrap()["env"]
+                    ["ANTHROPIC_MODEL"],
+                "saved"
+            );
+            let applied = validate_json(&fs::read_to_string(&settings).unwrap()).unwrap();
+            assert_eq!(applied["permissions"]["allow"][0], "Read");
+            assert_eq!(applied["theme"], "dark");
+            apply_claude_profile(second.id.clone()).unwrap();
+
+            let profiles = list_claude_profiles().unwrap();
+            assert_eq!(
+                profiles
+                    .iter()
+                    .filter(|profile| profile.last_applied.is_some())
+                    .count(),
+                1
+            );
+            assert!(profiles
+                .iter()
+                .find(|profile| profile.id == second.id)
+                .unwrap()
+                .last_applied
+                .is_some());
         }
     }
 }
