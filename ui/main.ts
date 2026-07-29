@@ -51,6 +51,7 @@ const icon={
   plus:svg('<path d="M12 5v14"/><path d="M5 12h14"/>'),
   folder:svg('<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>'),
   file:svg('<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2Z"/><path d="M14 2v6h6"/>'),
+  copy:svg('<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>'),
   edit:svg('<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3Z"/>'),
   trash:svg('<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>'),
   back:svg('<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>'),
@@ -100,6 +101,7 @@ function home(){
       <div class="card-actions">
         <button class="btn ${profile.last_applied?'':'primary'}" data-enable="${id}" ${profile.last_applied?'disabled':''}>${profile.last_applied?icon.check+'已启用':icon.zap+'启用'}</button>
         <button class="btn ghost" data-edit="${id}">${icon.edit}编辑</button>
+        <button class="btn ghost icon" data-copy="${id}" title="复制">${icon.copy}</button>
         <button class="btn ghost danger icon" data-del="${id}" title="${profile.last_applied?'请先启用其他配置再删除':'删除'}" ${profile.last_applied?'disabled':''}>${icon.trash}</button>
       </div>
     </article>`;
@@ -118,6 +120,7 @@ function home(){
   document.querySelector('#open')?.addEventListener('click',()=>void openDirectory());
   document.querySelectorAll<HTMLElement>('[data-edit]').forEach(element=>element.onclick=()=>void select(element.dataset.edit!));
   document.querySelectorAll<HTMLElement>('[data-enable]').forEach(element=>element.onclick=()=>void apply(element.dataset.enable!));
+  document.querySelectorAll<HTMLElement>('[data-copy]').forEach(element=>element.onclick=()=>void duplicate(element.dataset.copy!));
   document.querySelectorAll<HTMLElement>('[data-del]').forEach(element=>element.onclick=()=>void remove(element.dataset.del!));
 }
 
@@ -317,6 +320,15 @@ async function remove(id:string){
   try{
     await invoke(product==='codex'?'delete_profile':'delete_claude_profile',{profileId:id});
     await load();
+  }catch(caught){error=String(caught);render();}
+}
+
+async function duplicate(id:string){
+  try{
+    const command=product==='codex'?'duplicate_profile':'duplicate_claude_profile';
+    const profile=await invoke<Profile>(command,{profileId:id});
+    await load();
+    showMessage(`已复制为 ${profile.name}`);
   }catch(caught){error=String(caught);render();}
 }
 

@@ -312,6 +312,45 @@ pub mod commands {
     }
 
     #[tauri::command]
+    pub fn duplicate_profile(profile_id: String) -> Result<TomlProfile, String> {
+        let source = find_profile(&profile_id)?;
+        let content = fs::read_to_string(safe_profile_path(&source.file_name)?)
+            .map_err(|error| format!("无法读取待复制的配置: {error}"))?;
+        validate_toml(&content)?;
+        let source_auth_path = safe_profile_auth_path(&source.id)?;
+        let auth = if source_auth_path.exists() {
+            let auth = fs::read_to_string(&source_auth_path)
+                .map_err(|error| format!("无法读取待复制配置的 auth.json: {error}"))?;
+            validate_json(&auth).map_err(|error| format!("待复制配置的 auth.json {error}"))?;
+            Some(auth)
+        } else {
+            None
+        };
+
+        let now = Utc::now().to_rfc3339();
+        let id = Uuid::new_v4().to_string();
+        let profile = TomlProfile {
+            id: id.clone(),
+            name: format!("{}_COPY", source.name),
+            file_name: format!("{id}.toml"),
+            created_at: now.clone(),
+            updated_at: now,
+            last_applied: None,
+        };
+
+        fs::create_dir_all(profiles_dir()).map_err(err)?;
+        write_atomic(&safe_profile_path(&profile.file_name)?, &content)?;
+        if let Some(auth) = auth {
+            write_atomic(&safe_profile_auth_path(&profile.id)?, &auth)?;
+        }
+
+        let mut items = read_index()?;
+        items.push(profile.clone());
+        write_index(&items)?;
+        Ok(profile)
+    }
+
+    #[tauri::command]
     pub fn load_profile(profile_id: String) -> Result<String, String> {
         let p = find_profile(&profile_id)?;
         fs::read_to_string(safe_profile_path(&p.file_name)?).map_err(err)
@@ -774,6 +813,35 @@ pub mod commands {
         write_atomic(
             &safe_claude_profile_path(&profile.file_name)?,
             &current.content,
+        )?;
+        let mut items = read_claude_index()?;
+        items.push(profile.clone());
+        write_claude_index(&items)?;
+        Ok(profile)
+    }
+
+    #[tauri::command]
+    pub fn duplicate_claude_profile(profile_id: String) -> Result<TomlProfile, String> {
+        let source = find_claude_profile(&profile_id)?;
+        let content = fs::read_to_string(safe_claude_profile_path(&source.file_name)?)
+            .map_err(|error| format!("无法读取待复制的 Claude Code 配置: {error}"))?;
+        validate_json(&content)?;
+
+        let now = Utc::now().to_rfc3339();
+        let id = Uuid::new_v4().to_string();
+        let profile = TomlProfile {
+            id: id.clone(),
+            name: format!("{}_COPY", source.name),
+            file_name: format!("{id}.json"),
+            created_at: now.clone(),
+            updated_at: now,
+            last_applied: None,
+        };
+
+        fs::create_dir_all(claude_profiles_dir()).map_err(err)?;
+        write_atomic(
+            &safe_claude_profile_path(&profile.file_name)?,
+            &content,
         )?;
         let mut items = read_claude_index()?;
         items.push(profile.clone());
