@@ -563,6 +563,16 @@ textarea.array-input {
 }
 .field-row:last-child { border-bottom: none; }
 
+.model-control {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+.model-control select, .model-control input { flex: 1; min-width: 0; }
+.model-control .btn { flex: none; }
+[data-fetch-models].spinning svg { animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
 .field-empty {
   padding: 56px 16px;
   text-align: center;
