@@ -30,16 +30,25 @@ let activeTab:EditorTab='fields';
 let draftName='';
 let authContent='';
 let authFields:Field[]=[];
+let modelOptions:Record<Product,string[]>={codex:[],claude:[]};
+let fetchingModels=false;
 
 const esc=(value:string)=>value.replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]!));
+
+const toastsHtml=()=>`${message?`<div class="toast success">${icon.okCircle}<span>${esc(message)}</span></div>`:''}${error?`<div class="toast error">${icon.errCircle}<span>${esc(error)}</span></div>`:''}`;
+
+function renderToasts(){
+  const stack=document.querySelector<HTMLElement>('.toast-stack');
+  if(stack)stack.innerHTML=toastsHtml();
+}
 
 function showMessage(text:string){
   if(messageTimer!==undefined)window.clearTimeout(messageTimer);
   message=text;
   error='';
-  render();
+  renderToasts();
   messageTimer=window.setTimeout(()=>{
-    if(message===text){message='';render();}
+    if(message===text){message='';renderToasts();}
     messageTimer=undefined;
   },3000);
 }
@@ -74,7 +83,7 @@ function shell(content:string){
     <div class="top-actions">${topActions}</div>
   </header>
   <main class="page">${content}</main>
-  <div class="toast-stack">${message?`<div class="toast success">${icon.okCircle}<span>${esc(message)}</span></div>`:''}${error?`<div class="toast error">${icon.errCircle}<span>${esc(error)}</span></div>`:''}</div>`;
+  <div class="toast-stack">${toastsHtml()}</div>`;
   document.querySelectorAll<HTMLElement>('[data-product]').forEach(element=>element.onclick=()=>void switchProduct(element.dataset.product as Product));
   if(isEditor){
     document.querySelector('#back')?.addEventListener('click',()=>{isNew=false;view='home';render()});
@@ -128,10 +137,14 @@ function fieldControl(field:Field,index:number,attribute:'field'|'auth'='field')
   const data=attribute==='auth'?`data-auth="${index}"`:`data-field="${index}"`;
   if(field.kind==='boolean')return `<select ${data}><option value="true" ${field.value==='true'?'selected':''}>true</option><option value="false" ${field.value==='false'?'selected':''}>false</option></select>`;
   if(['array','json','other'].includes(field.kind))return `<textarea class="array-input" ${data}>${esc(field.value)}</textarea>`;
-  if(product==='codex'&&field.key==='model'){
-    const models=['gpt-5.6-sol','claude-fable-5','gpt-5.5','grok-4.5'];
-    if(field.value&&!models.includes(field.value))models.unshift(field.value);
-    return `<select ${data}>${models.map(model=>`<option value="${esc(model)}" ${model===field.value?'selected':''}>${esc(model)}</option>`).join('')}</select>`;
+  const isModelField=(product==='codex'&&field.key==='model')||(product==='claude'&&field.key==='ANTHROPIC_MODEL');
+  if(isModelField){
+    const models=modelOptions[product].length>0
+      ?[...modelOptions[product]]
+      :product==='codex'?['gpt-5.6-sol','claude-fable-5','gpt-5.5','grok-4.5']:[];
+    const listId=`model-list-${attribute}-${index}`;
+    const options=models.map(model=>`<option value="${esc(model)}"></option>`).join('');
+    return `<span class="model-control"><input type="text" ${data} list="${listId}" value="${esc(field.value)}" placeholder="输入检索或选择模型" autocomplete="off"><datalist id="${listId}">${options}</datalist><button type="button" class="btn ghost icon" data-fetch-models ${fetchingModels?'disabled':''} title="获取模型列表">${icon.reload}</button></span>`;
   }
   return `<input type="${['integer','float','number'].includes(field.kind)?'number':'text'}" ${data} value="${esc(field.value)}">`;
 }
@@ -158,6 +171,43 @@ function editor(){
     ${tabContent}
   </section>`);
   document.querySelectorAll<HTMLElement>('[data-tab]').forEach(element=>element.onclick=()=>void changeTab(element.dataset.tab as EditorTab));
+  document.querySelectorAll<HTMLElement>('[data-fetch-models]').forEach(element=>element.onclick=event=>{event.preventDefault();void fetchModels();});
+}
+
+function providerCredentials(){
+  if(product==='codex'){
+    const baseUrl=fields.find(field=>field.path.join('.')==='model_providers.custom.base_url')?.value??'';
+    let apiKey=authFields.find(field=>field.key==='OPENAI_API_KEY')?.value??'';
+    if(!apiKey||apiKey==='null'||!apiKey.startsWith('sk')){
+      apiKey=fields.find(field=>field.path[0]==='model_providers'&&field.path[1]==='custom'&&/^(experimental_bearer_token|key|token)$/i.test(field.key))?.value||apiKey;
+    }
+    return {baseUrl,apiKey};
+  }
+  const env=(key:string)=>fields.find(field=>field.key===key)?.value??'';
+  return {baseUrl:env('ANTHROPIC_BASE_URL'),apiKey:env('ANTHROPIC_AUTH_TOKEN')||env('ANTHROPIC_API_KEY')};
+}
+
+async function fetchModels(){
+  if(fetchingModels)return;
+  if(activeTab==='auth')readAuthFields();else readFields();
+  const {baseUrl,apiKey}=providerCredentials();
+  const buttons=document.querySelectorAll<HTMLButtonElement>('[data-fetch-models]');
+  fetchingModels=true;
+  buttons.forEach(button=>{button.disabled=true;button.classList.add('spinning');});
+  try{
+    const models=await invoke<string[]>('fetch_provider_models',{baseUrl,apiKey,product});
+    modelOptions[product]=models;
+    document.querySelectorAll<HTMLElement>('.model-control datalist').forEach(list=>{
+      list.innerHTML=models.map(model=>`<option value="${esc(model)}"></option>`).join('');
+    });
+    showMessage(`已获取 ${models.length} 个模型`);
+  }catch(caught){
+    error=String(caught);
+    renderToasts();
+  }finally{
+    fetchingModels=false;
+    buttons.forEach(button=>{button.disabled=false;button.classList.remove('spinning');});
+  }
 }
 
 function filterCodexFields(all:Field[]):Field[]{
@@ -289,7 +339,7 @@ async function saveEditorSnapshot():Promise<Profile>{
 
 async function save(){
   if(!selected)return;
-  try{await saveEditorSnapshot();view='home';showMessage('配置已保存');}
+  try{await saveEditorSnapshot();view='home';render();showMessage('配置已保存');}
   catch(caught){error=String(caught);render();}
 }
 

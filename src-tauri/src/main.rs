@@ -103,6 +103,7 @@ fn main() {
             agent_config_switcher_lib::commands::delete_claude_profile,
             agent_config_switcher_lib::commands::apply_claude_profile,
             agent_config_switcher_lib::commands::open_claude_config_directory,
+            agent_config_switcher_lib::commands::fetch_provider_models,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tauri application");

@@ -966,9 +966,101 @@ pub mod commands {
         write_index(&items)
     }
 
+    fn build_models_url(base: &str, product: &str) -> String {
+        let base = base.trim().trim_end_matches('/');
+        if product == "claude" && !base.ends_with("/v1") {
+            format!("{base}/v1/models")
+        } else {
+            format!("{base}/models")
+        }
+    }
+
+    #[tauri::command]
+    pub async fn fetch_provider_models(
+        base_url: String,
+        api_key: String,
+        product: String,
+    ) -> Result<Vec<String>, String> {
+        if base_url.trim().is_empty() {
+            return Err("请先填写 base_url".into());
+        }
+        if api_key.trim().is_empty() {
+            return Err("请先填写 API Key".into());
+        }
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .map_err(|e| format!("创建 HTTP 客户端失败：{e}"))?;
+        let url = build_models_url(&base_url, &product);
+        let request = if product == "claude" {
+            client
+                .get(&url)
+                .header("x-api-key", api_key.trim())
+                .header("anthropic-version", "2023-06-01")
+        } else {
+            client
+                .get(&url)
+                .header("Authorization", format!("Bearer {}", api_key.trim()))
+        };
+        let resp = request
+            .send()
+            .await
+            .map_err(|e| format!("请求失败：{e}"))?;
+        let status = resp.status();
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| format!("读取响应失败：{e}"))?;
+        if !status.is_success() {
+            let snippet: String = body.chars().take(200).collect();
+            return Err(format!("供应商返回错误（{status}）：{snippet}"));
+        }
+        let json: serde_json::Value =
+            serde_json::from_str(&body).map_err(|_| "响应不是有效 JSON".to_string())?;
+        let items = json
+            .get("data")
+            .and_then(|v| v.as_array())
+            .or_else(|| json.as_array())
+            .ok_or("响应中未找到模型列表（缺少 data 数组）")?;
+        let mut models: Vec<String> = items
+            .iter()
+            .filter_map(|m| m.get("id").and_then(|i| i.as_str()).map(String::from))
+            .collect();
+        models.sort();
+        models.dedup();
+        if models.is_empty() {
+            return Err("模型列表为空".into());
+        }
+        Ok(models)
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn build_models_url_variants() {
+            assert_eq!(
+                build_models_url("https://api.example.com/v1", "codex"),
+                "https://api.example.com/v1/models"
+            );
+            assert_eq!(
+                build_models_url("https://api.example.com/v1/", "codex"),
+                "https://api.example.com/v1/models"
+            );
+            assert_eq!(
+                build_models_url("https://api.anthropic.com", "claude"),
+                "https://api.anthropic.com/v1/models"
+            );
+            assert_eq!(
+                build_models_url("https://proxy.example.com/v1", "claude"),
+                "https://proxy.example.com/v1/models"
+            );
+            assert_eq!(
+                build_models_url("https://proxy.example.com/", "claude"),
+                "https://proxy.example.com/v1/models"
+            );
+        }
 
         static CLAUDE_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
