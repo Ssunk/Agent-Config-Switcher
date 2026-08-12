@@ -839,10 +839,7 @@ pub mod commands {
         };
 
         fs::create_dir_all(claude_profiles_dir()).map_err(err)?;
-        write_atomic(
-            &safe_claude_profile_path(&profile.file_name)?,
-            &content,
-        )?;
+        write_atomic(&safe_claude_profile_path(&profile.file_name)?, &content)?;
         let mut items = read_claude_index()?;
         items.push(profile.clone());
         write_claude_index(&items)?;
@@ -975,6 +972,23 @@ pub mod commands {
         }
     }
 
+    fn model_id_from_item(item: &serde_json::Value, product: &str) -> Option<String> {
+        let id = item.get("id")?.as_str()?;
+        // CLIProxyAPI cloaks non-Claude model IDs in Anthropic model-list
+        // responses, while preserving the usable model name in display_name.
+        // Keep normal Anthropic IDs unchanged.
+        if product == "claude" && id.starts_with("claude-fable-5-dd-") {
+            if let Some(display_name) = item
+                .get("display_name")
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+            {
+                return Some(display_name.to_owned());
+            }
+        }
+        Some(id.to_owned())
+    }
+
     #[tauri::command]
     pub async fn fetch_provider_models(
         base_url: String,
@@ -1002,10 +1016,7 @@ pub mod commands {
                 .get(&url)
                 .header("Authorization", format!("Bearer {}", api_key.trim()))
         };
-        let resp = request
-            .send()
-            .await
-            .map_err(|e| format!("请求失败：{e}"))?;
+        let resp = request.send().await.map_err(|e| format!("请求失败：{e}"))?;
         let status = resp.status();
         let body = resp
             .text()
@@ -1024,7 +1035,7 @@ pub mod commands {
             .ok_or("响应中未找到模型列表（缺少 data 数组）")?;
         let mut models: Vec<String> = items
             .iter()
-            .filter_map(|m| m.get("id").and_then(|i| i.as_str()).map(String::from))
+            .filter_map(|item| model_id_from_item(item, &product))
             .collect();
         models.sort();
         models.dedup();
@@ -1059,6 +1070,41 @@ pub mod commands {
             assert_eq!(
                 build_models_url("https://proxy.example.com/", "claude"),
                 "https://proxy.example.com/v1/models"
+            );
+        }
+
+        #[test]
+        fn model_id_from_item_uses_cpa_display_name_for_cloaked_claude_models() {
+            let item = serde_json::json!({
+                "id": "claude-fable-5-dd-hsalf-4v-keespeed",
+                "display_name": "deepseek-v4-flash"
+            });
+            assert_eq!(
+                model_id_from_item(&item, "claude"),
+                Some("deepseek-v4-flash".to_owned())
+            );
+        }
+
+        #[test]
+        fn model_id_from_item_keeps_standard_claude_ids() {
+            let item = serde_json::json!({
+                "id": "claude-sonnet-4-5-20250929",
+                "display_name": "Claude Sonnet 4.5"
+            });
+            assert_eq!(
+                model_id_from_item(&item, "claude"),
+                Some("claude-sonnet-4-5-20250929".to_owned())
+            );
+        }
+
+        #[test]
+        fn model_id_from_item_falls_back_to_cpa_id_without_display_name() {
+            let item = serde_json::json!({
+                "id": "claude-fable-5-dd-hsalf-4v-keespeed"
+            });
+            assert_eq!(
+                model_id_from_item(&item, "claude"),
+                Some("claude-fable-5-dd-hsalf-4v-keespeed".to_owned())
             );
         }
 
