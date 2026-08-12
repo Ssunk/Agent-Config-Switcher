@@ -32,6 +32,7 @@ let authContent='';
 let authFields:Field[]=[];
 let modelOptions:Record<Product,string[]>={codex:[],claude:[]};
 let fetchingModels=false;
+let suppressModelFocusOpen=false;
 
 const esc=(value:string)=>value.replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]!));
 
@@ -66,6 +67,7 @@ const icon={
   back:svg('<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>'),
   check:svg('<path d="M20 6 9 17l-5-5"/>'),
   zap:svg('<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/>'),
+  chevronDown:svg('<path d="m6 9 6 6 6-6"/>'),
   inbox:svg('<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11Z"/>'),
   okCircle:svg('<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>'),
   errCircle:svg('<circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/>')
@@ -139,15 +141,103 @@ function fieldControl(field:Field,index:number,attribute:'field'|'auth'='field')
   if(['array','json','other'].includes(field.kind))return `<textarea class="array-input" ${data}>${esc(field.value)}</textarea>`;
   const isModelField=(product==='codex'&&field.key==='model')||(product==='claude'&&field.key==='ANTHROPIC_MODEL');
   if(isModelField){
-    const models=modelOptions[product].length>0
-      ?[...modelOptions[product]]
-      :product==='codex'?['gpt-5.6-sol','claude-fable-5','gpt-5.5','grok-4.5']:[];
-    const listId=`model-list-${attribute}-${index}`;
-    const options=models.map(model=>`<option value="${esc(model)}"></option>`).join('');
-    return `<span class="model-control"><input type="text" ${data} list="${listId}" value="${esc(field.value)}" placeholder="输入检索或选择模型" autocomplete="off"><datalist id="${listId}">${options}</datalist><button type="button" class="btn ghost icon" data-fetch-models ${fetchingModels?'disabled':''} title="获取模型列表">${icon.reload}</button></span>`;
+    const options=modelOptionsList(product).map(modelOptionHtml).join('');
+    return `<span class="model-control"><span class="model-dropdown"><input type="text" ${data} value="${esc(field.value)}" placeholder="输入检索或选择模型" autocomplete="off" data-model-input aria-label="选择模型"><button type="button" class="model-toggle" data-model-toggle tabindex="-1" title="选择模型" aria-label="选择模型">${icon.chevronDown}</button><div class="model-list" data-model-list hidden>${options}</div></span><button type="button" class="btn ghost icon" data-fetch-models ${fetchingModels?'disabled':''} title="获取模型列表">${icon.reload}</button></span>`;
   }
   return `<input type="${['integer','float','number'].includes(field.kind)?'number':'text'}" ${data} value="${esc(field.value)}">`;
 }
+
+function modelOptionsList(current:Product):string[]{
+  return modelOptions[current].length>0
+    ?modelOptions[current]
+    :current==='codex'?['gpt-5.6-sol','claude-fable-5','gpt-5.5','grok-4.5']:[];
+}
+
+const modelOptionHtml=(model:string)=>`<button type="button" class="model-option" data-model-value="${esc(model)}" tabindex="-1">${esc(model)}</button>`;
+
+function openModelDropdown(dropdown:HTMLElement,filter=''){
+  const list=dropdown.querySelector<HTMLElement>('[data-model-list]');
+  const input=dropdown.querySelector<HTMLInputElement>('[data-model-input]');
+  if(!list||!input)return;
+  const keyword=filter.toLowerCase();
+  const models=modelOptionsList(product).filter(model=>!keyword||model.toLowerCase().includes(keyword));
+  list.innerHTML=models.length>0?models.map(modelOptionHtml).join(''):'<div class="model-empty">暂无可用模型</div>';
+  list.hidden=false;
+}
+
+function closeModelDropdown(dropdown:HTMLElement){
+  const list=dropdown.querySelector<HTMLElement>('[data-model-list]');
+  if(list)list.hidden=true;
+}
+
+function closeAllModelDropdowns(){
+  document.querySelectorAll<HTMLElement>('[data-model-list]').forEach(list=>{list.hidden=true;});
+}
+
+function bindModelDropdowns(){
+  document.querySelectorAll<HTMLElement>('[data-model-toggle]').forEach(toggle=>{
+    toggle.onclick=()=>{
+      const dropdown=toggle.closest<HTMLElement>('.model-dropdown');
+      const list=dropdown?.querySelector<HTMLElement>('[data-model-list]');
+      if(!dropdown||!list)return;
+      if(list.hidden)openModelDropdown(dropdown);else closeModelDropdown(dropdown);
+    };
+  });
+  document.querySelectorAll<HTMLInputElement>('[data-model-input]').forEach(input=>{
+    input.onfocus=()=>{if(suppressModelFocusOpen)return;openModelDropdownFor(input);};
+    input.oninput=()=>openModelDropdownFor(input,input.value);
+    input.onkeydown=(event)=>{
+      if(event.key==='Escape'){closeAllModelDropdowns();return;}
+      if(event.key!=='ArrowDown')return;
+      const list=input.closest<HTMLElement>('.model-dropdown')?.querySelector<HTMLElement>('[data-model-list]');
+      const first=list?.querySelector<HTMLElement>('.model-option');
+      if(list&&!list.hidden&&first){event.preventDefault();first.focus();}
+    };
+  });
+  document.querySelectorAll<HTMLElement>('[data-model-list]').forEach(list=>{
+    list.onclick=(event)=>{
+      const option=(event.target as HTMLElement).closest<HTMLElement>('.model-option');
+      if(option)selectModelOption(option);
+    };
+    list.onkeydown=(event)=>{
+      if(event.key==='Escape'){closeAllModelDropdowns();return;}
+      const option=(event.target as HTMLElement).closest<HTMLElement>('.model-option');
+      if(!option)return;
+      if(event.key==='Enter'){event.preventDefault();selectModelOption(option);return;}
+      if(event.key==='ArrowDown'){event.preventDefault();(option.nextElementSibling as HTMLElement|null)?.focus();return;}
+      if(event.key==='ArrowUp'){
+        event.preventDefault();
+        const previous=option.previousElementSibling as HTMLElement|null;
+        if(previous)previous.focus();
+        else option.closest<HTMLElement>('.model-dropdown')?.querySelector<HTMLInputElement>('[data-model-input]')?.focus();
+      }
+    };
+  });
+}
+
+function selectModelOption(option:HTMLElement){
+  const dropdown=option.closest<HTMLElement>('.model-dropdown');
+  const input=dropdown?.querySelector<HTMLInputElement>('[data-model-input]');
+  if(input){
+    suppressModelFocusOpen=true;
+    input.value=option.dataset.modelValue??'';
+    closeAllModelDropdowns();
+    input.focus();
+    suppressModelFocusOpen=false;
+  }else{
+    closeAllModelDropdowns();
+  }
+}
+
+function openModelDropdownFor(input:HTMLInputElement,filter=''){
+  const dropdown=input.closest<HTMLElement>('.model-dropdown');
+  if(dropdown)openModelDropdown(dropdown,filter);
+}
+
+document.addEventListener('click',(event)=>{
+  if((event.target as HTMLElement|null)?.closest?.('.model-dropdown'))return;
+  closeAllModelDropdowns();
+},true);
 
 function renderFieldList(items:Field[],attribute:'field'|'auth'){
   if(items.length===0)return '<div class="field-empty">没有可编辑字段</div>';
@@ -172,6 +262,7 @@ function editor(){
   </section>`);
   document.querySelectorAll<HTMLElement>('[data-tab]').forEach(element=>element.onclick=()=>void changeTab(element.dataset.tab as EditorTab));
   document.querySelectorAll<HTMLElement>('[data-fetch-models]').forEach(element=>element.onclick=event=>{event.preventDefault();void fetchModels();});
+  bindModelDropdowns();
 }
 
 function providerCredentials(){
@@ -197,9 +288,7 @@ async function fetchModels(){
   try{
     const models=await invoke<string[]>('fetch_provider_models',{baseUrl,apiKey,product});
     modelOptions[product]=models;
-    document.querySelectorAll<HTMLElement>('.model-control datalist').forEach(list=>{
-      list.innerHTML=models.map(model=>`<option value="${esc(model)}"></option>`).join('');
-    });
+    refreshModelLists();
     showMessage(`已获取 ${models.length} 个模型`);
   }catch(caught){
     error=String(caught);
@@ -208,6 +297,15 @@ async function fetchModels(){
     fetchingModels=false;
     buttons.forEach(button=>{button.disabled=false;button.classList.remove('spinning');});
   }
+}
+
+function refreshModelLists(){
+  document.querySelectorAll<HTMLElement>('[data-model-list]').forEach(list=>{
+    if(list.hidden)return;
+    const dropdown=list.closest<HTMLElement>('.model-dropdown');
+    const input=dropdown?.querySelector<HTMLInputElement>('[data-model-input]');
+    if(dropdown&&input)openModelDropdown(dropdown,input.value);
+  });
 }
 
 function filterCodexFields(all:Field[]):Field[]{
